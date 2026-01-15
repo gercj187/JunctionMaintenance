@@ -237,20 +237,25 @@ namespace JunctionMaintenance
         }
 
         private static Junction FindNearestJunction(Vector3 center, float radius)
-        {
-            Junction nearest = null;
-            float best = float.MaxValue;
-            foreach (var j in GameObject.FindObjectsOfType<Junction>())
-            {
-                float d = Vector3.Distance(center, j.transform.position);
-                if (d <= radius && d < best)
-                {
-                    nearest = j;
-                    best = d;
-                }
-            }
-            return nearest;
-        }
+		{
+			JunctionRegistry.EnsureInitialized();
+
+			Junction nearest = null;
+			float best = float.MaxValue;
+
+			foreach (var j in JunctionRegistry.All)
+			{
+				if (j == null) continue;
+
+				float d = Vector3.Distance(center, j.transform.position);
+				if (d <= radius && d < best)
+				{
+					nearest = j;
+					best = d;
+				}
+			}
+			return nearest;
+		}
 
         private static TrainCar FindNearestCaboose(Vector3 playerPos, float radius, float maxStandingKmh)
         {
@@ -282,7 +287,7 @@ namespace JunctionMaintenance
         public static void Log(string msg, bool force = false)
         {
             if (!force && Settings != null && !Settings.logging) return;
-            Mod?.Logger.Log("[JunctionMaintenance] " + msg);
+            Mod?.Logger.Log(msg);
         }
 
         private static float FloatFieldL(string label, float value)

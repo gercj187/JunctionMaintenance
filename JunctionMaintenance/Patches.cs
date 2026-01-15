@@ -14,6 +14,55 @@ using System.Collections.Generic;
 
 namespace JunctionMaintenance
 {	
+	internal static class JM_SaveCleanup
+	{
+		public static bool PendingLegacyCleanup = false;
+	}
+
+	internal static class JunctionRegistry
+	{
+		public static readonly List<Junction> All = new List<Junction>(512);
+		private static bool _initialized;
+		private static int _lastTryFrame = -1;
+
+		public static void EnsureInitialized()
+		{
+			// Schon erfolgreich initialisiert
+			if (_initialized && All.Count > 0)
+				return;
+
+			// Maximal 1 Versuch pro Frame
+			if (_lastTryFrame == Time.frameCount)
+				return;
+
+			_lastTryFrame = Time.frameCount;
+
+			All.Clear();
+			All.AddRange(GameObject.FindObjectsOfType<Junction>());
+
+			if (All.Count > 0)
+			{
+				_initialized = true;
+				Main.Log($"[JunctionRegistry] Initialized with {All.Count} junctions.", true);
+			}
+		}
+	}
+	
+	internal static class JunctionFrameGuard
+	{
+		private static readonly Dictionary<Junction, int> _lastFrame = new();
+
+		public static bool AlreadyProcessed(Junction j)
+		{
+			int f = Time.frameCount;
+			if (_lastFrame.TryGetValue(j, out var lf) && lf == f)
+				return true;
+
+			_lastFrame[j] = f;
+			return false;
+		}
+	}
+
 	internal static class JunctionKeyCache
 	{
 		private static readonly ConditionalWeakTable<Junction, Cached> _map = new();
@@ -35,101 +84,73 @@ namespace JunctionMaintenance
 		}
 	}
 
-    // LOAD hook: when save becomes current, read our map
-    [HarmonyPatch(typeof(StartGameData_FromSaveGame), "MakeCurrent")]
-    static class JM_Patch_LoadFromSave
-    {
-        static void Postfix(StartGameData_FromSaveGame __instance)
-        {
-            try
-            {
-                var saveData = Traverse.Create(__instance).Field("saveGameData").GetValue<SaveGameData>();
-                if (saveData == null) return;
+    // LOAD hook: savegame selected, but NOT loaded yet
+	[HarmonyPatch(typeof(StartGameData_FromSaveGame), "MakeCurrent")]
+	static class JM_Patch_LoadFromSave
+	{
+		static void Postfix()
+		{			
+			JM_SaveCleanup.PendingLegacyCleanup = true;
+			Main.Log("LoadFromSave: legacy save cleanup scheduled.", true);
+		}
+	}
 
-                var dataObject = Traverse.Create(saveData).Field("dataObject").GetValue<JObject>();
-                if (dataObject == null)
-                {
-                    Main.Log("SaveGameData.dataObject is null – aborting load.", true);
-                    return;
-                }
-
-                if (dataObject.TryGetValue(JM_Save.KEY, out JToken token) && token != null && token.Type != JTokenType.Null)
-                {
-                    var map = JM_Save.FromToken(token);
-                    DamageStore.ReplaceAll(map);
-                    Main.Log($"Loaded {map.Count} junction damage entries from save.");
-                }
-                else
-                {
-                    Main.Log("No JunctionMaintenance key in savegame – nothing to load.");
-                }
-            }
-            catch (Exception e)
-            {
-                Main.Log("LoadFromSave exception: " + e, true);
-            }
-        }
-    }
-
-    // SAVE hook: before saving, write our map
     [HarmonyPatch(typeof(SaveGameManager), "Save")]
-    static class JM_Patch_SaveGame
-    {
-        static void Prefix()
-        {
-            try
-            {
-                var saveData = SaveGameManager.Instance?.data;
-                if (saveData == null) return;
+	static class JM_Patch_SaveGame
+	{
+		static void Prefix()
+		{
+			try
+			{
+				var saveData = SaveGameManager.Instance?.data;
+				if (saveData == null) return;
 
-                var trav = Traverse.Create(saveData).Field("dataObject");
-                var dataObject = trav.GetValue<JObject>();
-                if (dataObject == null)
-                {
-                    dataObject = new JObject();
-                    trav.SetValue(dataObject);
-                }
+				var trav = Traverse.Create(saveData).Field("dataObject");
+				var dataObject = trav.GetValue<JObject>();
+				if (dataObject == null)
+				{
+					dataObject = new JObject();
+					trav.SetValue(dataObject);
+				}
 
-                var arr = JM_Save.ToJsonArray(Main.Settings.DamageMap);
-                dataObject[JM_Save.KEY] = arr;
-                Main.Log($"Saved {Main.Settings.DamageMap.Count} damage entries into savegame.");
-            }
-            catch (Exception e)
-            {
-                Main.Log("SaveGame Prefix exception: " + e, true);
-            }
-        }
-    }
+				// 🔹 One-time legacy cleanup
+				if (JM_SaveCleanup.PendingLegacyCleanup)
+				{
+					JM_SaveCleanup.PendingLegacyCleanup = false;
+
+					const string OLD_KEY = "JunctionMaintanence_Map";
+					if (dataObject.ContainsKey(OLD_KEY))
+					{
+						dataObject.Remove(OLD_KEY);
+						Main.Log(
+							"Removed legacy save entry 'JunctionMaintanence_Map' (cleanup on save).",
+							true
+						);
+					}
+				}
+
+				// 🔹 Write correct map
+				dataObject[JM_Save.KEY] = JM_Save.ToJsonArray(Main.Settings.DamageMap);
+				Main.Log($"Saved {Main.Settings.DamageMap.Count} damage entries into savegame.");
+			}
+			catch (Exception e)
+			{
+				Main.Log("SaveGame Prefix exception: " + e, true);
+			}
+		}
+	}
 
     // New career init: ensure key exists
-    [HarmonyPatch(typeof(StartGameData_NewCareer), "PrepareNewSaveData")]
-    static class JM_Patch_NewCareerInit
-    {
-        static void Postfix(ref SaveGameData saveGameData)
-        {
-            try
-            {
-                if (saveGameData == null) return;
-                var trav = Traverse.Create(saveGameData).Field("dataObject");
-                var dataObject = trav.GetValue<JObject>();
-                if (dataObject == null)
-                {
-                    dataObject = new JObject();
-                    trav.SetValue(dataObject);
-                }
-
-                if (!dataObject.ContainsKey(JM_Save.KEY))
-                {
-                    dataObject[JM_Save.KEY] = JM_Save.ToJsonArray(Main.Settings.DamageMap);
-                    Main.Log("New career: initialized JunctionMaintenance map.");
-                }
-            }
-            catch (Exception e)
-            {
-                Main.Log("NewCareerInit exception: " + e, true);
-            }
-        }
-    }
+    [HarmonyPatch(typeof(StartGameData_NewCareer), "PrepareNewSaveData")]	
+	static class JM_Init_JunctionRegistry_New
+	{
+		static void Postfix()
+		{
+			JM_SaveCleanup.PendingLegacyCleanup = false;
+			Main.Settings.DamageMap.Clear();
+			Main.Log("New career: junction damage map reset.", true);
+		}
+	}
 
     // ------------------- BLOCK MANUAL SWITCHING AT 100% DAMAGE -------------------
 
@@ -222,6 +243,9 @@ namespace JunctionMaintenance
         {
             if (!Main.Enabled) return;
 
+			if (JunctionFrameGuard.AlreadyProcessed(__instance))
+				return;
+
             try
             {
                 var probe = new Junction.Branch(currentTrack, first);
@@ -247,7 +271,8 @@ namespace JunctionMaintenance
                 if (FlipGuard.IsBlocked(key)) return;
 
                 float dmg01 = DamageStore.Get(key);
-                if (dmg01 <= 0f) return;
+                if (dmg01 <= 0.0001f)
+					return;
 
                 float speedKmh = SpeedEstimator.EstimateImpactSpeedKmh(__instance);
                 if (speedKmh <= Main.Settings.safeNoFlipSpeedKmh)
@@ -350,38 +375,38 @@ namespace JunctionMaintenance
 	
 	public static class SpeedEstimator
 	{
-		/// <summary>
-		/// Ermittelt die beste Annäherung der Fahrzeuggeschwindigkeit in der Nähe der Junction.
-		/// Nutzt TrainCarQuery.GetAll() (Snapshot) und SqrMagnitude für günstige Distanzchecks.
-		/// Wenn RandomFlip deaktiviert ist, sparen wir uns die Berechnung direkt.
-		/// </summary>
+		private static float _cachedSpeed;
+		private static int _lastFrame = -1;
+
 		public static float EstimateImpactSpeedKmh(Junction j)
 		{
 			if (j == null) return 0f;
+			if (!Main.Settings.enableRandomFlip) return 0f;
 
-			// Wenn RandomFlip aus ist, brauchen wir die Geschwindigkeit i.d.R. nicht.
-			if (!Main.Settings.enableRandomFlip)
-				return 0f;
+			int f = Time.frameCount;
+			if (_lastFrame == f)
+				return _cachedSpeed;
+
+			_lastFrame = f;
+			_cachedSpeed = 0f;
 
 			Vector3 jp = j.transform.position;
-			float bestD2 = 30f * 30f; // 30 m Radius (Distanz^2)
-			float bestKmh = 0f;
+			float bestD2 = 30f * 30f;
 
 			var cars = TrainCarQuery.GetAll();
 			for (int i = 0; i < cars.Length; i++)
 			{
-				var tc = cars[i];
-				var rb = tc?.rb;
+				var rb = cars[i]?.rb;
 				if (rb == null) continue;
 
-				float d2 = (tc.transform.position - jp).sqrMagnitude;
+				float d2 = (cars[i].transform.position - jp).sqrMagnitude;
 				if (d2 < bestD2)
 				{
 					bestD2 = d2;
-					bestKmh = rb.velocity.magnitude * 3.6f;
+					_cachedSpeed = rb.velocity.magnitude * 3.6f;
 				}
 			}
-			return bestKmh;
+			return _cachedSpeed;
 		}
 	}
 }
