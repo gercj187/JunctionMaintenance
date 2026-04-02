@@ -13,6 +13,13 @@ using DV;
 
 namespace JunctionMaintenance
 {
+	public enum RepairMode
+	{
+		Penalty = 0,
+		Reward = 1,
+		Dynamic = 2
+	}
+	
     [Serializable]
     public class Settings : UnityModManager.ModSettings
     {
@@ -30,9 +37,13 @@ namespace JunctionMaintenance
         public float repairAmountPercent = 1f;
         public float repairVehicleSearchRadius = 12f;
         public float maxVehicleStandingSpeedKmh = 1.0f;
-        public float maxRepairCostFull = 1000f;        // $ cost for 100% repair (wallet pay)
+        public float maxRepairCostFull = 10000f;
+		public float maxRepairRewardFull = 1000f;
+		public float maintenanceLicensePrice = 50000f;
 		public bool BlockManualSwitchAtFullDamage = true;
-
+		
+		// GameMode
+		public RepairMode repairMode = RepairMode.Penalty;
 
         [XmlIgnore]
         private Dictionary<string, float> _damageMap = new Dictionary<string, float>(1024);

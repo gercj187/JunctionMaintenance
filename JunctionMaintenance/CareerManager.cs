@@ -12,6 +12,8 @@ using HarmonyLib;
 using UnityEngine;
 using TMPro;
 using DV;
+using DV.Utils;
+using DV.InventorySystem;
 using DV.ServicePenalty.UI;
 
 namespace JunctionMaintenance
@@ -108,20 +110,20 @@ namespace JunctionMaintenance
         /// Berechnet die voraussichtlichen Kosten ($) für den nächsten Reparaturschritt
         /// basierend auf aktuellem Schaden und Settings (repairAmountPercent * maxRepairCostFull).
         /// </summary>
-        private static double ComputeNextStepCost(Junction j)
+        private static double ComputeNextStepamount(Junction j)
         {
             string key = DamageStore.MakeKey(j);
             float before = Mathf.Clamp01(DamageStore.Get(key)); // 0..1
             float step = Mathf.Clamp01(Main.Settings.repairAmountPercent);
             float repaired01 = Mathf.Min(step, before);
-            double cost = Math.Round(Math.Max(0.0, Main.Settings.maxRepairCostFull) * repaired01, 2);
-            return cost;
+            double amount = Math.Round(Math.Max(0.0, Main.Settings.maxRepairCostFull) * repaired01, 2);
+            return amount;
         }
 
         /// <summary>
         /// Baut die formatierte Listenzeile. Optional Kosten ausblenden (Stationsmodus).
         /// </summary>
-        public static string FormatLine(Junction j, float _dSqrIgnored, bool showCost = true)
+        public static string FormatLine(Junction j, float _dSqrIgnored, bool showamount = true)
         {
             const int TOTAL_WIDTH = 53;
 
@@ -131,11 +133,25 @@ namespace JunctionMaintenance
             int dmgPct = Mathf.RoundToInt(dmgPctF);
             string dmgCol = $"DMG = {dmgPct} %";
 
-            string costCol = "";
-            if (showCost)
+            string amountCol = "";
+            if (showamount)
             {
-                double cost = ComputeNextStepCost(j);
-                costCol = cost.ToString("N2", CultureInfo.GetCultureInfo("de-DE")) + " $";
+                bool isRewardMode =
+					Main.Settings.repairMode == RepairMode.Reward ||
+					(Main.Settings.repairMode == RepairMode.Dynamic && MaintenanceLicense.HasLicense);
+										
+				double amount;
+
+				if (isRewardMode)
+				{
+					amount = Math.Round(Math.Max(0.0, Main.Settings.maxRepairRewardFull) * GetPersistentDamage01(j), 2);
+					amountCol = "+" + amount.ToString("N2", CultureInfo.GetCultureInfo("de-DE")) + " $";
+				}
+				else
+				{
+					amount = Math.Round(Math.Max(0.0, Main.Settings.maxRepairCostFull) * GetPersistentDamage01(j), 2);
+					amountCol = "-" + amount.ToString("N2", CultureInfo.GetCultureInfo("de-DE")) + " $";
+				}
             }
 
             var sb = new StringBuilder(new string(' ', TOTAL_WIDTH));
@@ -149,12 +165,12 @@ namespace JunctionMaintenance
             for (int i = 0; i < dmgCol.Length && center + i < TOTAL_WIDTH; i++)
                 sb[center + i] = dmgCol[i];
 
-            if (showCost && !string.IsNullOrEmpty(costCol))
+            if (showamount && !string.IsNullOrEmpty(amountCol))
             {
                 // Kosten ganz rechts
-                int right = TOTAL_WIDTH - costCol.Length;
-                for (int i = 0; i < costCol.Length && right + i < TOTAL_WIDTH; i++)
-                    sb[right + i] = costCol[i];
+                int right = TOTAL_WIDTH - amountCol.Length;
+                for (int i = 0; i < amountCol.Length && right + i < TOTAL_WIDTH; i++)
+                    sb[right + i] = amountCol[i];
             }
 
             return sb.ToString();
@@ -489,7 +505,7 @@ namespace JunctionMaintenance
             {
                 if (idx < 0 || idx >= count) return "";
                 // Im StationMode KEINE Kosten anzeigen:
-                string line = JM_CareerManagerHelpers.FormatLine(Items[idx].j, Items[idx].dSqr, showCost: !StationMode);
+                string line = JM_CareerManagerHelpers.FormatLine(Items[idx].j, Items[idx].dSqr, showamount: !StationMode);
                 bool isSel = (idx == Selected);
                 var col = isSel ? hl : reg;
                 string hex = ColorUtility.ToHtmlStringRGB(col);
@@ -735,38 +751,66 @@ namespace JunctionMaintenance
                         return false;
                     }
 
-                    double cost = Math.Round(Math.Max(0.0, Main.Settings.maxRepairCostFull) * repaired01, 2);
-
                     string jName = null;
                     try { jName = j.junctionData.junctionIdLong; } catch { }
                     if (string.IsNullOrWhiteSpace(jName))
-                        jName = j?.gameObject?.name ?? "Switch";
+                        jName = j?.gameObject?.name ?? "Switch";					
 
-                    // LicensePayScreen holen
-                    var licensePay = UnityEngine.Object.FindObjectOfType<CareerManagerLicensePayingScreen>();
-                    if (licensePay == null)
-                    {
-                        Main.Log("CareerManagerLicensePayingScreen not found.", true);
-                        return false;
-                    }
+					// =====================================================
+					// NEW: MODE SWITCH (CORE FEATURE)
+					// =====================================================
+					bool isRewardMode = false;
 
-                    if (licensePay.cashReg == null)
-                    {
-                        Main.Log("LicensePayScreen.cashReg is null.", true);
-                        return false;
-                    }
+					// MODE LOGIC
+					if (Main.Settings.repairMode == RepairMode.Reward)
+					{
+						isRewardMode = true;
+					}
+					else if (Main.Settings.repairMode == RepairMode.Dynamic)
+					{
+						isRewardMode = MaintenanceLicense.HasLicense;
+					}
 
-                    // Transaktion setzen
-                    licensePay.cashReg.ClearCurrentTransaction();
-                    licensePay.cashReg.SetTotalCost(cost);
+					// 👉 amount NUR EINMAL deklarieren
+					double amount;
 
-                    // Status merken
-                    JM_Payment.Start(key, repaired01, cost, jName, before);
+					if (isRewardMode)
+					{
+						amount = Math.Round(Math.Max(0.0, Main.Settings.maxRepairRewardFull) * repaired01, 2);
 
-                    // Screen aktivieren
-                    licensePay.screenSwitcher?.SetActiveDisplay(licensePay);
+						float after = Mathf.Max(0f, before - repaired01);
+						DamageStore.Set(key, after);
 
-                    return false;
+						var printer = UnityEngine.Object.FindObjectOfType<MoneyPrinter>();
+						if (printer != null)
+							printer.PrintMoney(amount);
+
+						string msg = $"Repaired {jName} by {repaired01 * 100f:0.#}% – Earned $ {amount:N2}";
+
+						JM_CareerManagerHelpers.SetInfoLines(
+							JM_CM_ListState.Info,
+							JM_CM_ListState.MainScreen,
+							"Junction Maintenance",
+							new[] { msg }
+						);
+
+						JM_CM_ListState.Render();
+						return false;
+					}
+					else
+					{
+						amount = Math.Round(Math.Max(0.0, Main.Settings.maxRepairCostFull) * repaired01, 2);
+
+						var licensePay = UnityEngine.Object.FindObjectOfType<CareerManagerLicensePayingScreen>();
+
+						licensePay.cashReg.ClearCurrentTransaction();
+						licensePay.cashReg.SetTotalCost(amount);
+
+						JM_Payment.Start(key, repaired01, amount, jName, before);
+						licensePay.screenSwitcher?.SetActiveDisplay(licensePay);
+
+						return false;
+					}
                 }
 
                 case InputAction.Cancel:
@@ -799,16 +843,16 @@ namespace JunctionMaintenance
         public static bool Active;
         public static string Key;
         public static float Repaired01;     // Anteil 0..1
-        public static double Cost;          // Betrag
+        public static double amount;          // Betrag
         public static string JunctionName;  // Anzeige
         public static float DamageBefore01; // 0..1 vor Reparatur
 
-        public static void Start(string key, float repaired01, double cost, string junctionName, float damageBefore01)
+        public static void Start(string key, float repaired01, double amount, string junctionName, float damageBefore01)
         {
             Active = true;
             Key = key;
             Repaired01 = repaired01;
-            Cost = cost;
+            JM_Payment.amount = amount;
             JunctionName = junctionName;
             DamageBefore01 = Mathf.Clamp01(damageBefore01);
         }
@@ -818,7 +862,7 @@ namespace JunctionMaintenance
             Active = false;
             Key = null;
             Repaired01 = 0f;
-            Cost = 0.0;
+            amount = 0.0;
             JunctionName = null;
             DamageBefore01 = 0f;
         }
@@ -842,12 +886,12 @@ namespace JunctionMaintenance
                 }
 
                 cashReg.ClearCurrentTransaction();
-                cashReg.SetTotalCost(JM_Payment.Cost);
+                cashReg.SetTotalCost(JM_Payment.amount);
 
                 if (__instance.title1 != null) __instance.title1.text = "Junction Maintenance";
                 if (__instance.title2 != null) __instance.title2.text = "Junction:";
                 if (__instance.licenseNameText != null) __instance.licenseNameText.text = JM_Payment.JunctionName ?? "Unknown";
-                if (__instance.licensePriceText != null) __instance.licensePriceText.text = "$ " + JM_Payment.Cost.ToString("N2", CultureInfo.GetCultureInfo("de-DE"));
+                if (__instance.licensePriceText != null) __instance.licensePriceText.text = "$ " + JM_Payment.amount.ToString("N2", CultureInfo.GetCultureInfo("de-DE"));
                 if (__instance.insertWallet != null) __instance.insertWallet.text = "Insert wallet to pay";
                 if (__instance.depositedText != null) __instance.depositedText.text = "Deposited";
                 if (__instance.depositedValue != null) __instance.depositedValue.text = "$ " + cashReg.DepositedCash.ToString("N2", CultureInfo.GetCultureInfo("de-DE"));
@@ -995,19 +1039,19 @@ namespace JunctionMaintenance
     }
 
     // ---------- Robustheit direkt an der Kasse ----------
-    [HarmonyPatch(typeof(DV.CashRegister.CashRegisterCareerManager), "GetTotalCost")]
-    internal static class JM_CashReg_GetTotalCost
-    {
-        static bool Prefix(ref double __result)
-        {
-            if (JM_Payment.Active)
-            {
-                __result = Math.Max(0.0, JM_Payment.Cost);
-                return false; // Original überspringen
-            }
-            return true;
-        }
-    }
+    [HarmonyPatch(typeof(DV.CashRegister.CashRegisterCareerManager), "GetTotalCost")] // FIX
+	internal static class JM_CashReg_GetTotalCost // optional rename
+	{
+		static bool Prefix(ref double __result)
+		{
+			if (JM_Payment.Active)
+			{
+				__result = Math.Max(0.0, JM_Payment.amount);
+				return false;
+			}
+			return true;
+		}
+	}
 
     [HarmonyPatch(typeof(DV.CashRegister.CashRegisterCareerManager), "TotalUnitsInBasket")]
     internal static class JM_CashReg_TotalUnits
@@ -1047,7 +1091,7 @@ namespace JunctionMaintenance
 
                 if (JM_CM_ListState.Info != null && JM_CM_ListState.MainScreen != null)
                 {
-                    string msg = $"Repaired {JM_Payment.JunctionName} by {JM_Payment.Repaired01*100f:0.#}% – Cost $ {JM_Payment.Cost.ToString("N2", CultureInfo.GetCultureInfo("de-DE"))}";
+                    string msg = $"Repaired {JM_Payment.JunctionName} by {JM_Payment.Repaired01*100f:0.#}% – amount $ {JM_Payment.amount.ToString("N2", CultureInfo.GetCultureInfo("de-DE"))}";
                     // Erfolgsmeldung schlicht als Paragraph zeigen
                     JM_CareerManagerHelpers.SetInfoLines(JM_CM_ListState.Info, JM_CM_ListState.MainScreen, "Junction Maintenance", new[] { msg });
                     JM_CM_ListState.Render();

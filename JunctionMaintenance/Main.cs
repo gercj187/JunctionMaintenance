@@ -18,6 +18,7 @@ namespace JunctionMaintenance
         public static Settings Settings;
         public static bool Enabled;
         private static Harmony _harmony;
+		public static bool HasCustomLicensesMod;
 
         private static float _lastActionTs;
         private const float ACTION_COOLDOWN = 0.25f;
@@ -27,6 +28,10 @@ namespace JunctionMaintenance
             Mod = modEntry;
 
             SelfHealSettingsFile(modEntry);
+			
+			HasCustomLicensesMod = UnityModManager.modEntries.Any(m => m.Info.Id.Equals("DVCustomLicenses", StringComparison.OrdinalIgnoreCase));
+
+			Log("[JunctionMaintenance] DVCustomLicenses installed: " + HasCustomLicensesMod, true);
 
             try
             {
@@ -38,6 +43,24 @@ namespace JunctionMaintenance
                 Settings = new Settings();
                 try { Settings.Save(modEntry); } catch (Exception ex2) { Log("Settings.Save failed: " + ex2, force: true); }
             }
+			
+			// FORCE MODE BASED ON CUSTOM LICENSE MOD
+			if (HasCustomLicensesMod)
+			{
+				if (Settings.repairMode != RepairMode.Dynamic)
+				{
+					Settings.repairMode = RepairMode.Dynamic;
+					Log("[JunctionMaintenance] Forcing Dynamic mode (DVCustomLicenses detected)", true);
+				}
+			}
+			else
+			{
+				if (Settings.repairMode == RepairMode.Dynamic)
+				{
+					Settings.repairMode = RepairMode.Penalty;
+					Log("[JunctionMaintenance] Dynamic mode disabled (DVCustomLicenses missing) -> fallback to Penalty", true);
+				}
+			}
 
             modEntry.OnToggle  = OnToggle;
             modEntry.OnGUI     = OnGUI;
@@ -87,76 +110,212 @@ namespace JunctionMaintenance
         }
 
         private static void OnGUI(UnityModManager.ModEntry modEntry)
-        {
-            GUILayout.Label("Junction Maintenance - Damage Settings:", UnityModManager.UI.bold, GUILayout.ExpandWidth(false));
-            GUILayout.Space(4);
-            GUILayout.Label("Damage model (run-through): Damage in % = (speed kph / 10); <10 kph = no damage");
-			Settings.enableRandomFlip = ToggleL("Enable random flip", Settings.enableRandomFlip);
-			if (Settings.enableRandomFlip)
-            {				
-                // Safe-Speed (1..30 km/h, integer)
-				GUILayout.BeginHorizontal();
-				GUILayout.Label($"   Safe-Speed to avoid random flip : {Settings.safeNoFlipSpeedKmh:0} kph", GUILayout.Width(320));
-                int safe = Mathf.RoundToInt(GUILayout.HorizontalSlider(Mathf.Clamp(Settings.safeNoFlipSpeedKmh, 1, 30), 1, 30, GUILayout.Width(300)));
-                Settings.safeNoFlipSpeedKmh = Mathf.Clamp(safe, 1, 30);
-				GUILayout.EndHorizontal();
+		{
+			bool hasMod = Main.HasCustomLicensesMod;
 
-                // Flip Chance-Multiplier (0.01 .. 0.50, step 0.01)
-				GUILayout.BeginHorizontal();
-				GUILayout.Label($"   Flip Chance-Multiplier: {Settings.flipMultiplierPercent:0.00} ×", GUILayout.Width(380));
-                float f = Mathf.Round(GUILayout.HorizontalSlider(Mathf.Clamp01(Settings.flipMultiplierPercent), 0.01f, 0.50f, GUILayout.Width(300)) * 100f) / 100f;
-				Settings.flipMultiplierPercent = Mathf.Clamp(f, 0.01f, 0.50f);
-				GUILayout.EndHorizontal();
-				
-				// Examples
-                GUILayout.Label("   Flip Examples:");
-                GUILayout.Label($"   Junction with 1% Damage  = {(1f * Settings.flipMultiplierPercent):0.##}% chance");
-                GUILayout.Label($"   Junction with 10% Damage = {(10f * Settings.flipMultiplierPercent):0.##}% chance");
-                GUILayout.Label($"   Junction with 100% Damage = {(100f * Settings.flipMultiplierPercent):0.##}% chance");
-            }
-			
-            Settings.BlockManualSwitchAtFullDamage = GUILayout.Toggle(Settings.BlockManualSwitchAtFullDamage,"Enable ruined junctions (cant be switched when 100% damaged)",GUILayout.Width(400));
-
-            GUILayout.Space(10);
-            GUILayout.Label("Junction Maintenance - Repair Settings:", UnityModManager.UI.bold, GUILayout.ExpandWidth(false));
-
-            // Repair/List Radius (5..25 m integer)
+			// =============================
+			// GAME MODE (TOP)
+			// =============================
+			GUILayout.Label("Game Mode:", UnityModManager.UI.bold);
+            GUILayout.Space(2);
+			GUIStyle box = new GUIStyle(GUI.skin.box);
+			box.alignment = TextAnchor.UpperLeft;
+			box.wordWrap = true;
+			GUILayout.Space(5);			
 			GUILayout.BeginHorizontal();
-            GUILayout.Label($"Repair Radius:  {Settings.repairRadius:0} m", GUILayout.Width(320));
-            float rr = GUILayout.HorizontalSlider(Mathf.Round(Mathf.Clamp(Settings.repairRadius, 5f, 25f)), 5f, 25f, GUILayout.Width(300));
-            Settings.repairRadius = Mathf.Round(Mathf.Clamp(rr, 5, 25));
-            GUILayout.EndHorizontal();
-
-            // Max Repair Cost
-            Settings.maxRepairCostFull = FloatFieldL("Max Repair Cost: $", Settings.maxRepairCostFull);
+			GUIStyle active   = new GUIStyle(GUI.skin.button);
+			GUIStyle inactive = new GUIStyle(GUI.skin.button);
 			
-			/*
-			================= OLD SETTINGS =================
-            GUILayout.Space(6);
-            GUILayout.Label("Repair Settings", UnityModManager.UI.bold, GUILayout.ExpandWidth(false));
+			if (hasMod)
+			{
+				GUI.enabled = false;
+				GUILayout.Button("PAY", GUILayout.Width(150));
+				GUILayout.Button("EARN", GUILayout.Width(150));
+				GUI.enabled = true;
+				
+				if (GUILayout.Button("LICENSE",Settings.repairMode == RepairMode.Dynamic ? active : inactive,GUILayout.Width(150)))
+				{
+					Settings.repairMode = RepairMode.Dynamic;
+				}
+			}
+			else
+			{
+				GUILayout.BeginHorizontal();
 
-            // Repair/List Radius (5..25 m integer)
-            
+				active.normal.textColor = Color.green;
 
-            Settings.repairKey                  = TextFieldL("Repair hotkey (letter)", Settings.repairKey);
-            Settings.repairAmountPercent        = FloatFieldL("Repair amount per action (0..1)", Settings.repairAmountPercent);
-            Settings.repairVehicleSearchRadius  = FloatFieldL("Vehicle proximity radius (m)", Settings.repairVehicleSearchRadius);
-            Settings.maxVehicleStandingSpeedKmh = FloatFieldL("Max vehicle speed for repair (km/h)", Settings.maxVehicleStandingSpeedKmh);
-            
+				// PAY
+				if (GUILayout.Button("PAY",
+					Settings.repairMode == RepairMode.Penalty ? active : inactive,
+					GUILayout.Width(150)))
+				{
+					Settings.repairMode = RepairMode.Penalty;
+				}
 
-            GUILayout.Space(6);
-            GUILayout.Label("Flip Behavior", UnityModManager.UI.bold, GUILayout.ExpandWidth(false));
-            Settings.flipCooldownAfterForcedSec = FloatFieldL("Cooldown after forced run-through (s)", Settings.flipCooldownAfterForcedSec);
-			================= OLD SETTINGS =================
-			*/
-            GUILayout.Space(6);
-            Settings.logging = ToggleL("Enable logging", Settings.logging);
-            if (GUILayout.Button("List damaged junctions in log", GUILayout.Width(260)))
-            {
-                foreach (var kv in DamageStore.All())
-                    Log($"Damaged: {kv.Key} -> {kv.Value * 100f:0.###}%");
-            }
-        }
+				// EARN
+				if (GUILayout.Button("EARN",
+					Settings.repairMode == RepairMode.Reward ? active : inactive,
+					GUILayout.Width(150)))
+				{
+					Settings.repairMode = RepairMode.Reward;
+				}
+
+				// LICENSE
+				if (hasMod)
+				{
+					if (GUILayout.Button("LICENSE",Settings.repairMode == RepairMode.Dynamic ? active : inactive,GUILayout.Width(150)))
+					{
+						Settings.repairMode = RepairMode.Dynamic;
+					}
+				}
+				else
+				{
+					GUI.enabled = false;
+					GUILayout.Button("LICENSE", GUILayout.Width(150));
+					GUI.enabled = true;
+				}
+
+				GUILayout.EndHorizontal();
+			}
+			GUILayout.EndHorizontal();
+			if (!hasMod)
+			{
+				GUIStyle style = new GUIStyle(GUI.skin.label);
+				style.normal.textColor = Color.gray;
+				style.fontStyle = FontStyle.Italic;
+
+				GUILayout.Label("License mode requires the DVCustomLicenses mod.", style);
+			}
+			GUILayout.Space(5);
+			// =============================
+			// INFO BOX
+			// =============================
+			string info = "";
+			if (Settings.repairMode == RepairMode.Penalty)
+			{
+				info = "Since you most likely caused the damage to the junction, you are responsible for paying the repair costs.";
+			}
+			else if (Settings.repairMode == RepairMode.Reward)
+			{
+				info = "Regardless of who caused the damage, repairing a junction grants you a small compensation for your effort.";
+			}
+			else
+			{
+				info = "Railway switches are expensive.\n" +
+					   "To avoid paying full repair costs for every incident, you can acquire the maintenance license\n" +
+					   "and get partially compensated as an authorized technician.";
+			}			
+            GUILayout.Space(2);	
+			GUILayout.Box(info, box, GUILayout.ExpandWidth(true));
+			GUILayout.Space(5);
+
+			// =============================
+			// ECONOMY SETTINGS
+			// =============================
+			GUILayout.Label("Economy", UnityModManager.UI.bold);
+            GUILayout.Space(2);
+			GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.Space(2);
+
+			// PAY
+			if (Settings.repairMode == RepairMode.Penalty)
+			{
+				Settings.maxRepairCostFull = FloatFieldL("Max Repair Cost:", Settings.maxRepairCostFull);
+			}
+
+			// EARN
+			if (Settings.repairMode == RepairMode.Reward)
+			{
+				Settings.maxRepairRewardFull = FloatFieldL("Max Repair Payout:", Settings.maxRepairRewardFull);
+			}
+
+			// LICENSE (Dynamic)
+			if (Settings.repairMode == RepairMode.Dynamic)
+			{
+				Settings.maxRepairCostFull   = FloatFieldL("Max Repair Cost:", Settings.maxRepairCostFull);
+				Settings.maxRepairRewardFull = FloatFieldL("Max Repair Payout:", Settings.maxRepairRewardFull);
+
+				GUILayout.Space(3);
+				Settings.maintenanceLicensePrice = FloatFieldL("Maintenance License Price:", Settings.maintenanceLicensePrice);
+			}
+            GUILayout.Space(2);
+			GUILayout.EndVertical();	
+			GUILayout.Space(5);
+
+			// =============================
+			// DAMAGE BEHAVIOR
+			// =============================
+			GUILayout.Label("Damage Behavior", UnityModManager.UI.bold);
+            GUILayout.Space(2);
+			GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.Space(2);
+
+			Settings.BlockManualSwitchAtFullDamage =
+				GUILayout.Toggle(Settings.BlockManualSwitchAtFullDamage,
+				"Disable switches at 100% damage");
+
+            GUILayout.Space(2);
+			GUILayout.EndVertical();	
+			GUILayout.Space(5);
+			// =============================
+			// RANDOM FLIP
+			// =============================
+			GUILayout.Label("Random Flip", UnityModManager.UI.bold);
+            GUILayout.Space(2);
+			GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.Space(2);
+
+			Settings.enableRandomFlip = GUILayout.Toggle(Settings.enableRandomFlip, "Enable random flip");
+
+			if (Settings.enableRandomFlip)
+			{
+				GUILayout.Space(5);
+
+				GUILayout.BeginHorizontal();
+				GUILayout.Label($"Safe Speed: {Settings.safeNoFlipSpeedKmh:0} km/h", GUILayout.Width(250));
+				Settings.safeNoFlipSpeedKmh = Mathf.Round(
+					GUILayout.HorizontalSlider(Settings.safeNoFlipSpeedKmh, 1, 30, GUILayout.Width(250))
+				);
+				GUILayout.EndHorizontal();
+
+				GUILayout.BeginHorizontal();
+				GUILayout.Label($"Multiplier: {Settings.flipMultiplierPercent:0.00}", GUILayout.Width(250));
+				Settings.flipMultiplierPercent =
+					Mathf.Round(GUILayout.HorizontalSlider(Settings.flipMultiplierPercent, 0.01f, 0.50f, GUILayout.Width(250)) * 100f) / 100f;
+				GUILayout.EndHorizontal();
+
+				GUILayout.Space(5);
+
+				GUILayout.Label("Formula Preview:");
+				GUILayout.Label($"1% damage  → {(1f * Settings.flipMultiplierPercent):0.##}% chance");
+				GUILayout.Label($"10% damage → {(10f * Settings.flipMultiplierPercent):0.##}% chance");
+				GUILayout.Label($"100% damage → {(100f * Settings.flipMultiplierPercent):0.##}% chance");
+			}
+
+            GUILayout.Space(2);
+			GUILayout.EndVertical();	
+			GUILayout.Space(5);
+
+			// =============================
+			// LOGGING
+			// =============================
+			//Settings.logging = GUILayout.Toggle(Settings.logging, "Enable logging");
+
+			GUILayout.Space(10);
+
+			// =============================
+			// DEBUG BUTTON
+			// =============================
+			if (GUILayout.Button("List all damaged junctions in log", GUILayout.Width(500)))
+			{
+				Log("==== DAMAGED JUNCTIONS ====", true);
+
+				foreach (var kv in DamageStore.All())
+					Log($"Damaged: {kv.Key} -> {kv.Value * 100f:0.###}%", true);
+
+				Log("==== END ====", true);
+			}
+		}
 
         private static void OnSaveGUI(UnityModManager.ModEntry modEntry)
         {
