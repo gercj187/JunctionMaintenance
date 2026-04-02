@@ -2,7 +2,8 @@
 	"Releases": [
 		{
 			"Id": "JunctionMaintenance",
-			"Version": "1.0.0",
+			"Version": "1.02.0",
+			"DownloadUrl": "https://github.com/gercj187/JunctionMaintenance/releases/download/JunctionMaintenance/ShopRework_v1.02.0.zip"
 		}
 	]
 }
