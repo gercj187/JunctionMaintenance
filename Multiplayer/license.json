@@ -1,0 +1,400 @@
+{
+  "LicenseType": 0,
+  "Identifier": "JunctionMaintenance",
+  "Color": {
+    "R": 1,
+    "G": 0.5530189,
+    "B": 0.017915639,
+    "A": 1.0
+  },
+  "Price": 50000.0,
+  "InsuranceFeeQuotaIncrease": 25000.0,
+  "BonusTimeDecreasePercentage": 0.0,
+  "RequiredGeneralLicenseId": "ManualService",
+  "RequiredJobLicenseId": "Shunting",
+  "Availability": 0,
+  "TranslationName": {
+    "Items": [
+      {
+        "Language": 0,
+        "Value": "Junction Maintenance"
+      },
+      {
+        "Language": 1,
+        "Value": "Údržba výhybek"
+      },
+      {
+        "Language": 2,
+        "Value": "Vedligeholdelse af sporskifter"
+      },
+      {
+        "Language": 3,
+        "Value": "Weichen Instandhaltung"
+      },
+      {
+        "Language": 4,
+        "Value": "Mantenimiento de desvíos"
+      },
+      {
+        "Language": 5,
+        "Value": "Vaihdehuolto"
+      },
+      {
+        "Language": 6,
+        "Value": "Maintenance des aiguillages"
+      },
+      {
+        "Language": 7,
+        "Value": "रेलवे स्विच रखरखाव"
+      },
+      {
+        "Language": 8,
+        "Value": "Váltókarbantartás"
+      },
+      {
+        "Language": 9,
+        "Value": "Manutenzione degli scambi"
+      },
+      {
+        "Language": 10,
+        "Value": "分岐器メンテナンス"
+      },
+      {
+        "Language": 11,
+        "Value": "분기기 유지보수"
+      },
+      {
+        "Language": 12,
+        "Value": "Vedlikehold av sporveksler"
+      },
+      {
+        "Language": 13,
+        "Value": "Onderhoud van wissels"
+      },
+      {
+        "Language": 14,
+        "Value": "Utrzymanie rozjazdów"
+      },
+      {
+        "Language": 15,
+        "Value": "Manutenção de desvios"
+      },
+      {
+        "Language": 17,
+        "Value": "Întreținerea macazurilor"
+      },
+      {
+        "Language": 18,
+        "Value": "Обслуживание стрелок"
+      },
+      {
+        "Language": 19,
+        "Value": "Údržba výhybiek"
+      },
+      {
+        "Language": 20,
+        "Value": "Underhåll av växlar"
+      },
+      {
+        "Language": 21,
+        "Value": "Makas bakımı"
+      },
+      {
+        "Language": 22,
+        "Value": "Обслуговування стрілок"
+      },
+      {
+        "Language": 23,
+        "Value": "道岔维护"
+      }
+    ]
+  },
+  "TranslationDescription": {
+    "Items": [
+      {
+        "Language": 0,
+        "Value": "Acquire this license to become a certified railway switch maintenance engineer, officially recognized by the railway infrastructure authority. With this qualification, you are no longer responsible for covering the repair costs of damaged junctions. Instead, you will receive financial compensation for performing maintenance and restoring railway switches."
+      },
+      {
+        "Language": 1,
+        "Value": "Získejte tuto licenci a staňte se certifikovaným technikem údržby železničních výhybek, oficiálně uznávaným správou železniční infrastruktury. S touto kvalifikací již nenesete odpovědnost za náklady na opravy poškozených výhybek. Místo toho budete za provádění údržby a obnovu železničních výhybek finančně odměňováni."
+      },
+      {
+        "Language": 2,
+        "Value": "Erhverv denne licens for at blive en certificeret vedligeholdelsestekniker for jernbaneskifter, officielt anerkendt af jernbaneinfrastrukturmyndigheden. Med denne kvalifikation er du ikke længere ansvarlig for at dække reparationsomkostninger for beskadigede sporskifter. I stedet modtager du økonomisk kompensation for at udføre vedligeholdelse og restaurere jernbaneskifter."
+      },
+      {
+        "Language": 3,
+        "Value": "Erwerben Sie diese Lizenz, um ein zertifizierter Wartungstechniker für Eisenbahnweichen zu werden, offiziell anerkannt von der Eisenbahninfrastrukturbehörde. Mit dieser Qualifikation sind Sie nicht länger für die Reparaturkosten beschädigter Weichen verantwortlich. Stattdessen erhalten Sie eine finanzielle Vergütung für die Durchführung von Wartungsarbeiten und die Instandsetzung von Weichen."
+      },
+      {
+        "Language": 4,
+        "Value": "Obtén esta licencia para convertirte en un técnico certificado en mantenimiento de desvíos ferroviarios, oficialmente reconocido por la autoridad de infraestructura ferroviaria. Con esta cualificación, ya no serás responsable de cubrir los costes de reparación de desvíos dañados. En su lugar, recibirás una compensación económica por realizar el mantenimiento y restaurar los desvíos ferroviarios."
+      },
+      {
+        "Language": 5,
+        "Value": "Hanki tämä lisenssi tullaksesi sertifioiduksi rautatievaihteiden huoltoteknikoksi, jonka rautatieinfrastruktuuriviranomainen on virallisesti hyväksynyt. Tämän pätevyyden myötä et enää ole vastuussa vaurioituneiden vaihteiden korjauskustannuksista. Sen sijaan saat taloudellista korvausta huoltotöiden suorittamisesta ja vaihteiden kunnostamisesta."
+      },
+      {
+        "Language": 6,
+        "Value": "Obtenez cette licence pour devenir un technicien certifié en maintenance des aiguillages ferroviaires, officiellement reconnu par l’autorité des infrastructures ferroviaires. Avec cette qualification, vous n’êtes plus responsable des coûts de réparation des aiguillages endommagés. Vous recevrez à la place une compensation financière pour l’entretien et la remise en état des aiguillages."
+      },
+      {
+        "Language": 7,
+        "Value": "इस लाइसेंस को प्राप्त करें और रेलवे स्विच रखरखाव इंजीनियर के रूप में प्रमाणित बनें, जिसे रेलवे अवसंरचना प्राधिकरण द्वारा आधिकारिक रूप से मान्यता प्राप्त है। इस योग्यता के साथ, आपको क्षतिग्रस्त स्विचों की मरम्मत लागत वहन करने की आवश्यकता नहीं होगी। इसके बजाय, आपको रखरखाव कार्य करने और स्विचों को पुनर्स्थापित करने के लिए वित्तीय भुगतान प्राप्त होगा।"
+      },
+      {
+        "Language": 8,
+        "Value": "Szerezze meg ezt az engedélyt, hogy hivatalosan elismert, tanúsított vasúti váltókarbantartó szakemberré váljon. Ezzel a képesítéssel már nem Ön viseli a sérült váltók javításának költségeit. Ehelyett pénzügyi juttatásban részesül a karbantartási munkák elvégzéséért és a váltók helyreállításáért."
+      },
+      {
+        "Language": 9,
+        "Value": "Ottieni questa licenza per diventare un tecnico certificato nella manutenzione degli scambi ferroviari, ufficialmente riconosciuto dall’autorità infrastrutturale ferroviaria. Con questa qualifica non sarai più responsabile dei costi di riparazione degli scambi danneggiati. Al contrario, riceverai una compensazione economica per eseguire la manutenzione e ripristinare gli scambi."
+      },
+      {
+        "Language": 10,
+        "Value": "このライセンスを取得すると、鉄道インフラ管理当局に公式に認められた認定ポイント（分岐器）保守技術者になることができます。この資格を取得すると、損傷した分岐器の修理費用を負担する必要はなくなります。その代わりに、保守作業や分岐器の修復を行うことで報酬を受け取ることができます。"
+      },
+      {
+        "Language": 11,
+        "Value": "이 라이선스를 획득하면 철도 인프라 당국에서 공식적으로 인정하는 철도 분기기 유지보수 엔지니어가 될 수 있습니다. 이 자격을 갖추면 손상된 분기기의 수리 비용을 부담할 필요가 없습니다. 대신 유지보수 작업과 분기기 복구를 수행하면 금전적 보상을 받게 됩니다."
+      },
+      {
+        "Language": 12,
+        "Value": "Skaff deg denne lisensen for å bli en sertifisert vedlikeholdsingeniør for jernbanesporveksler, offisielt anerkjent av jernbaneinfrastrukturmyndigheten. Med denne kvalifikasjonen er du ikke lenger ansvarlig for reparasjonskostnader for skadede sporveksler. I stedet mottar du økonomisk kompensasjon for vedlikehold og restaurering av sporveksler."
+      },
+      {
+        "Language": 13,
+        "Value": "Verkrijg deze licentie om een gecertificeerde onderhoudstechnicus voor spoorwissels te worden, officieel erkend door de spoorinfrastructuurautoriteit. Met deze kwalificatie ben je niet langer verantwoordelijk voor de reparatiekosten van beschadigde wissels. In plaats daarvan ontvang je een financiële vergoeding voor onderhoud en herstel van spoorwissels."
+      },
+      {
+        "Language": 14,
+        "Value": "Zdobądź tę licencję, aby zostać certyfikowanym technikiem utrzymania rozjazdów kolejowych, oficjalnie uznawanym przez zarządcę infrastruktury kolejowej. Dzięki tej kwalifikacji nie ponosisz już kosztów naprawy uszkodzonych rozjazdów. Zamiast tego otrzymujesz wynagrodzenie za wykonywanie prac konserwacyjnych i przywracanie rozjazdów do sprawności."
+      },
+      {
+        "Language": 15,
+        "Value": "Adquira esta licença para se tornar um engenheiro certificado de manutenção de desvios ferroviários, oficialmente reconhecido pela autoridade de infraestrutura ferroviária. Com esta qualificação, você não é mais responsável pelos custos de reparo de desvios danificados. Em vez disso, receberá compensação financeira pela realização de manutenção e restauração dos desvios."
+      },
+      {
+        "Language": 17,
+        "Value": "Obține această licență pentru a deveni un tehnician certificat în întreținerea macazurilor feroviare, recunoscut oficial de autoritatea infrastructurii feroviare. Cu această calificare, nu mai ești responsabil pentru costurile de reparare ale macazurilor deteriorate. În schimb, vei primi compensații financiare pentru efectuarea lucrărilor de întreținere și restaurare."
+      },
+      {
+        "Language": 18,
+        "Value": "Получите эту лицензию, чтобы стать сертифицированным специалистом по обслуживанию железнодорожных стрелок, официально признанным органом железнодорожной инфраструктуры. С этой квалификацией вы больше не несёте ответственность за оплату ремонта повреждённых стрелок. Вместо этого вы будете получать финансовое вознаграждение за обслуживание и восстановление стрелок."
+      },
+      {
+        "Language": 19,
+        "Value": "Získajte túto licenciu a staňte sa certifikovaným technikom údržby železničných výhybiek, oficiálne uznávaným správou železničnej infraštruktúry. S touto kvalifikáciou už nenesiete zodpovednosť za náklady na opravy poškodených výhybiek. Namiesto toho budete finančne odmeňovaní za údržbu a obnovu výhybiek."
+      },
+      {
+        "Language": 20,
+        "Value": "Skaffa denna licens för att bli en certifierad underhållstekniker för järnvägsväxlar, officiellt erkänd av järnvägsinfrastrukturmyndigheten. Med denna kvalifikation är du inte längre ansvarig för reparationskostnader för skadade växlar. Istället får du ekonomisk ersättning för att utföra underhåll och återställa växlar."
+      },
+      {
+        "Language": 21,
+        "Value": "Bu lisansı edinerek demiryolu altyapı otoritesi tarafından resmi olarak tanınan sertifikalı bir makas bakım mühendisi olun. Bu yeterlilikle artık hasarlı makasların onarım maliyetlerinden sorumlu olmazsınız. Bunun yerine bakım çalışmaları yapmak ve makasları onarmak için finansal kazanç elde edersiniz."
+      },
+      {
+        "Language": 22,
+        "Value": "Отримайте цю ліцензію, щоб стати сертифікованим спеціалістом з обслуговування залізничних стрілок, офіційно визнаним органом залізничної інфраструктури. З цією кваліфікацією ви більше не несете відповідальності за витрати на ремонт пошкоджених стрілок. Натомість ви отримуватимете фінансову винагороду за технічне обслуговування та відновлення стрілок."
+      },
+      {
+        "Language": 23,
+        "Value": "获得此许可证，成为经铁路基础设施管理机构正式认可的铁路道岔维护工程师。拥有该资格后，您将不再需要承担损坏道岔的维修费用。相反，您将因执行维护工作和修复道岔而获得经济报酬。"
+      }
+    ]
+  },
+  "TranslationItem": {
+    "Items": [
+      {
+        "Language": 0,
+        "Value": "Junction Maintenance"
+      },
+      {
+        "Language": 1,
+        "Value": "Údržba výhybek"
+      },
+      {
+        "Language": 2,
+        "Value": "Vedligeholdelse af sporskifter"
+      },
+      {
+        "Language": 3,
+        "Value": "Weichen Instandhaltung"
+      },
+      {
+        "Language": 4,
+        "Value": "Mantenimiento de desvíos"
+      },
+      {
+        "Language": 5,
+        "Value": "Vaihdehuolto"
+      },
+      {
+        "Language": 6,
+        "Value": "Maintenance des aiguillages"
+      },
+      {
+        "Language": 7,
+        "Value": "रेलवे स्विच रखरखाव"
+      },
+      {
+        "Language": 8,
+        "Value": "Váltókarbantartás"
+      },
+      {
+        "Language": 9,
+        "Value": "Manutenzione degli scambi"
+      },
+      {
+        "Language": 10,
+        "Value": "分岐器メンテナンス"
+      },
+      {
+        "Language": 11,
+        "Value": "분기기 유지보수"
+      },
+      {
+        "Language": 12,
+        "Value": "Vedlikehold av sporveksler"
+      },
+      {
+        "Language": 13,
+        "Value": "Onderhoud van wissels"
+      },
+      {
+        "Language": 14,
+        "Value": "Utrzymanie rozjazdów"
+      },
+      {
+        "Language": 15,
+        "Value": "Manutenção de desvios"
+      },
+      {
+        "Language": 17,
+        "Value": "Întreținerea macazurilor"
+      },
+      {
+        "Language": 18,
+        "Value": "Обслуживание стрелок"
+      },
+      {
+        "Language": 19,
+        "Value": "Údržba výhybiek"
+      },
+      {
+        "Language": 20,
+        "Value": "Underhåll av växlar"
+      },
+      {
+        "Language": 21,
+        "Value": "Makas bakımı"
+      },
+      {
+        "Language": 22,
+        "Value": "Обслуговування стрілок"
+      },
+      {
+        "Language": 23,
+        "Value": "道岔维护"
+      }
+    ]
+  },
+  "TranslationInfoItem": {
+    "Items": [
+      {
+        "Language": 0,
+        "Value": "Junction Maintenance"
+      },
+      {
+        "Language": 1,
+        "Value": "Údržba výhybek"
+      },
+      {
+        "Language": 2,
+        "Value": "Vedligeholdelse af sporskifter"
+      },
+      {
+        "Language": 3,
+        "Value": "Weichen Instandhaltung"
+      },
+      {
+        "Language": 4,
+        "Value": "Mantenimiento de desvíos"
+      },
+      {
+        "Language": 5,
+        "Value": "Vaihdehuolto"
+      },
+      {
+        "Language": 6,
+        "Value": "Maintenance des aiguillages"
+      },
+      {
+        "Language": 7,
+        "Value": "रेलवे स्विच रखरखाव"
+      },
+      {
+        "Language": 8,
+        "Value": "Váltókarbantartás"
+      },
+      {
+        "Language": 9,
+        "Value": "Manutenzione degli scambi"
+      },
+      {
+        "Language": 10,
+        "Value": "分岐器メンテナンス"
+      },
+      {
+        "Language": 11,
+        "Value": "분기기 유지보수"
+      },
+      {
+        "Language": 12,
+        "Value": "Vedlikehold av sporveksler"
+      },
+      {
+        "Language": 13,
+        "Value": "Onderhoud van wissels"
+      },
+      {
+        "Language": 14,
+        "Value": "Utrzymanie rozjazdów"
+      },
+      {
+        "Language": 15,
+        "Value": "Manutenção de desvios"
+      },
+      {
+        "Language": 17,
+        "Value": "Întreținerea macazurilor"
+      },
+      {
+        "Language": 18,
+        "Value": "Обслуживание стрелок"
+      },
+      {
+        "Language": 19,
+        "Value": "Údržba výhybiek"
+      },
+      {
+        "Language": 20,
+        "Value": "Underhåll av växlar"
+      },
+      {
+        "Language": 21,
+        "Value": "Makas bakımı"
+      },
+      {
+        "Language": 22,
+        "Value": "Обслуговування стрілок"
+      },
+      {
+        "Language": 23,
+        "Value": "道岔维护"
+      }
+    ]
+  }
+}
