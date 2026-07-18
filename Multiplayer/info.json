@@ -1,6 +1,6 @@
 {
 	"Id": "JunctionMaintenanceMP",
-	"Version": "1.03.0",
+	"Version": "1.03.1",
 	"DisplayName": "Junction Maintenance (MP)",
 	"Author": "CJ187",
 	"Credits": "Coookie, NotAnOption and ChatGPT",	
@@ -8,7 +8,7 @@
 	"EntryMethod": "JunctionMaintenance.Main.Load",
 	"ManagerVersion": "0.27.2",
 	"HomePage": "https://www.nexusmods.com/derailvalley/mods/1251",
-	"Repository": "https://raw.githubusercontent.com/gercj187/JunctionMaintenanceMP/refs/heads/main/repository.json",
+	"Repository": "https://raw.githubusercontent.com/gercj187/JunctionMaintenance/main/Multiplayer/repository.json",
 	"LoadAfter": [
 		"Multiplayer"
 	],
