@@ -117,6 +117,66 @@ namespace JunctionMaintenance
 		}
 
         // =============================
+        // PRICE OVERRIDE
+        // =============================
+
+        internal static void ReapplyConfiguredPrice()
+        {
+            try
+            {
+                if (Main.Settings == null)
+                {
+                    Debug.Log(
+                        "[JunctionMaintenance] " +
+                        "Settings null - skip license price");
+
+                    return;
+                }
+
+                GeneralLicenseType_v2 lic =
+                    Get();
+
+                if (lic == null)
+                {
+                    Debug.LogError(
+                        "[JunctionMaintenance] " +
+                        "JunctionMaintenance license NOT FOUND");
+
+                    return;
+                }
+
+                float price =
+                    Mathf.Max(
+                        0f,
+                        Main.Settings.maintenanceLicensePrice);
+
+                if (price > 0f)
+                {
+                    lic.price =
+                        price;
+
+                    Debug.Log(
+                        "[JunctionMaintenance] " +
+                        "License price applied: " +
+                        price);
+                }
+                else
+                {
+                    Debug.Log(
+                        "[JunctionMaintenance] " +
+                        "License price unchanged (<= 0)");
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError(
+                    "[JunctionMaintenance] " +
+                    "License price application ERROR: " +
+                    e);
+            }
+        }
+
+        // =============================
         // PRICE OVERRIDE PATCH
         // =============================
 
@@ -125,37 +185,7 @@ namespace JunctionMaintenance
         {
             static void Postfix(LicenseManager __instance)
             {
-                try
-                {
-                    if (Main.Settings == null)
-                    {
-                        Debug.Log("[JunctionMaintenance] Settings null ? skip license price");
-                        return;
-                    }
-
-                    var lic = Get();
-                    if (lic == null)
-                    {
-                        Debug.LogError("[JunctionMaintenance] junction_maintenance NOT FOUND");
-                        return;
-                    }
-
-                    float price = Main.Settings.maintenanceLicensePrice;
-
-                    if (price > 0f)
-                    {
-                        lic.price = price;
-                        Debug.Log("[JunctionMaintenance] License price set via UMM: " + price);
-                    }
-                    else
-                    {
-                        Debug.Log("[JunctionMaintenance] License price unchanged (<= 0)");
-                    }
-                }
-                catch (Exception e)
-                {
-                    Debug.LogError("[JunctionMaintenance] Price patch ERROR: " + e);
-                }
+                ReapplyConfiguredPrice();
             }
         }
     }

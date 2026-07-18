@@ -114,11 +114,22 @@ namespace JunctionMaintenance
 	static class JM_Patch_SaveGame
 	{
 		static void Prefix()
-		{
-			try
-			{
-				var saveData = SaveGameManager.Instance?.data;
-				if (saveData == null) return;
+        {
+            try
+            {
+                if (JM_Multiplayer.IsClient)
+                {
+                    Main.Log(
+                        "[MP] Junction damage save skipped on client.",
+                        true);
+
+                    return;
+                }
+
+                var saveData = SaveGameManager.Instance?.data;
+
+                if (saveData == null)
+                    return;
 
 				var trav = Traverse.Create(saveData).Field("dataObject");
 				var dataObject = trav.GetValue<JObject>();

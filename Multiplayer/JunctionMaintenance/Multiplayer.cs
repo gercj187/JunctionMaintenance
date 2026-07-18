@@ -13,62 +13,38 @@ namespace JunctionMaintenance
     // ============================================================
     // PACKETS
     // ============================================================
-
-    // NEW: Client -> Server
-    // Ein Spieler hat beim Befahren Schaden verursacht.
+	
     public class ServerBoundJunctionDamagePacket : IPacket
     {
         public string JunctionKey { get; set; } = string.Empty;
         public float DamageToAdd { get; set; }
     }
 
-    // CHANGE: Client -> Server
-	// Ein Client hat eine Weiche repariert.
-	// Der Host validiert Reparaturumfang, Modus und Geldbetrag erneut.
 	public class ServerBoundJunctionRepairPacket : IPacket
 	{
 		public string JunctionKey { get; set; } = string.Empty;
-
-		// Reparaturanteil im Bereich 0..1.
 		public float RepairAmount { get; set; }
-
-		// NEW:
-		// Der auf dem Client angezeigte Betrag.
-		// Wird vom Host nur zur Plausibilitätsprüfung verwendet.
 		public double MoneyAmount { get; set; }
-
-		// NEW:
-		// true = Client erwartete EARN
-		// false = Client erwartete PAY
-		// Der Host bestimmt den tatsächlichen Modus selbst.
 		public bool IsReward { get; set; }
 	}
 
-    // NEW: Client -> Server
-    // Client ist vollständig geladen und fordert den Gesamtzustand an.
     public class ServerBoundJunctionReadyPacket : IPacket
     {
         public bool Ready { get; set; }
     }
 
-    // NEW: Server -> Client
-    // Absoluter Zustand einer einzelnen Weiche.
     public class ClientBoundJunctionStatePacket : IPacket
     {
         public string JunctionKey { get; set; } = string.Empty;
         public float Damage { get; set; }
     }
 
-    // NEW: Server -> Client
-    // Vollständiger Zustand aller beschädigten Weichen.
     public class ClientBoundJunctionSnapshotPacket : IPacket
     {
         public string[] JunctionKeys { get; set; } = Array.Empty<string>();
         public float[] DamageValues { get; set; } = Array.Empty<float>();
     }
 
-    // NEW: Server -> Client
-    // Spielrelevante Settings des Hosts.
     public class ClientBoundJunctionSettingsPacket : IPacket
     {
         public bool EnableRandomFlip { get; set; }
@@ -146,12 +122,9 @@ namespace JunctionMaintenance
                 return;
             }
 
-            // NEW
-            _runtimeObject = new GameObject(
-                "JunctionMaintenance_Multiplayer");
+            _runtimeObject = new GameObject("JunctionMaintenance_Multiplayer");
 
-            UnityEngine.Object.DontDestroyOnLoad(
-                _runtimeObject);
+            UnityEngine.Object.DontDestroyOnLoad(_runtimeObject);
 
             _runtimeObject.AddComponent<JunctionMaintenanceMPClient>();
             _runtimeObject.AddComponent<JunctionMaintenanceMPServer>();
@@ -164,14 +137,8 @@ namespace JunctionMaintenance
         // ========================================================
         // DAMAGE
         // ========================================================
-
-        /// <summary>
-        /// Wird von dem Spieler aufgerufen, der tatsächlich den
-        /// Weichenschaden verursacht hat.
-        /// </summary>
-        public static void ReportDamage(
-            string junctionKey,
-            float damageToAdd)
+		
+        public static void ReportDamage(string junctionKey,float damageToAdd)
         {
             if (string.IsNullOrWhiteSpace(junctionKey))
             {
@@ -188,7 +155,6 @@ namespace JunctionMaintenance
 
             if (IsClient)
             {
-                // Client meldet seinen verursachten Schaden an den Server.
                 JunctionMaintenanceMPClient.Instance?
                     .SendDamageReport(
                         junctionKey,
@@ -199,7 +165,6 @@ namespace JunctionMaintenance
 
             if (IsHost)
             {
-                // Host hat den Schaden selbst verursacht.
                 JunctionMaintenanceMPServer.Instance?
                     .ApplyDamageAndBroadcast(
                         junctionKey,
@@ -208,10 +173,7 @@ namespace JunctionMaintenance
                 return;
             }
 
-            // Singleplayer
-            DamageStore.AddPercent(
-                junctionKey,
-                clampedDamage);
+            DamageStore.AddPercent(junctionKey,clampedDamage);
         }
 
         // ========================================================
@@ -264,9 +226,7 @@ namespace JunctionMaintenance
 				return;
 			}
 
-			// Singleplayer
-			float before =
-				DamageStore.Get(junctionKey);
+			float before = DamageStore.Get(junctionKey);
 
 			float after =
 				Mathf.Max(
@@ -309,17 +269,8 @@ namespace JunctionMaintenance
         private bool _readyPacketSent;		
 		private bool _wasMultiplayerClient;
 		private bool _clearedForCurrentConnection;
-		
-		// NEW:
-		// Erst nach Empfang eines Snapshots ist der Client synchronisiert.
 		private bool _authoritativeSnapshotReceived;
-
-		// NEW:
-		// Ready-Request wird wiederholt, bis der Host antwortet.
 		private float _nextReadyRequestTime;
-
-		// NEW:
-		// Schäden werden bis zur vollständigen Synchronisation gesammelt.
 		private readonly Dictionary<string, float> _pendingDamageReports =
 			new Dictionary<string, float>(
 				StringComparer.Ordinal);
@@ -371,48 +322,57 @@ namespace JunctionMaintenance
 				isClientNow;
 
 			if (clientObjectChanged)
-			{
-				_client =
-					currentClient;
+            {
+                if (_client != null)
+                {
+                    Main.RestoreLocalSettings();
+                    MaintenanceLicense.ReapplyConfiguredPrice();
+                }
 
-				_registered = false;
-				_readyPacketSent = false;
+                _client =currentClient;
 
-				// NEW:
-				// Neue Verbindung besitzt noch keinen gültigen Hostzustand.
-				_authoritativeSnapshotReceived = false;
-				_nextReadyRequestTime = 0f;
+                _registered = false;
+                _readyPacketSent = false;
 
-				_clearedForCurrentConnection = false;
+                _authoritativeSnapshotReceived = false;
+                _nextReadyRequestTime = 0f;
 
-				// CHANGE:
-				// Keine Schadensmeldungen aus einer alten Verbindung übernehmen.
-				_pendingDamageReports.Clear();
+                _clearedForCurrentConnection = false;
 
-				Main.Log(
-					"[MP] Client connection object changed. " +
-					"Registration and synchronization state reset.",
-					true);
-			}
+                _pendingDamageReports.Clear();
+
+                Main.Log(
+                    "[MP] Client connection object changed. " +
+                    "Local settings restored and synchronization " +
+                    "state reset.",
+                    true);
+            }
 
 			if (roleChanged)
-			{
-				_wasMultiplayerClient =
-					isClientNow;
+            {
+                bool wasClientBefore =_wasMultiplayerClient;
+                _wasMultiplayerClient =isClientNow;
 
-				_readyPacketSent = false;
-				_authoritativeSnapshotReceived = false;
-				_nextReadyRequestTime = 0f;
-				_clearedForCurrentConnection = false;
+                _readyPacketSent = false;
+                _authoritativeSnapshotReceived = false;
+                _nextReadyRequestTime = 0f;
+                _clearedForCurrentConnection = false;
 
-				_pendingDamageReports.Clear();
+                _pendingDamageReports.Clear();
 
-				Main.Log(
-					isClientNow
-						? "[MP] Entered multiplayer as client."
-						: "[MP] Left multiplayer client state.",
-					true);
-			}
+                if (wasClientBefore &&!isClientNow)
+                {
+                    Main.RestoreLocalSettings();
+                    MaintenanceLicense.ReapplyConfiguredPrice();
+                }
+
+                Main.Log(
+                    isClientNow
+                        ? "[MP] Entered multiplayer as client."
+                        : "[MP] Left multiplayer client state. " +
+                          "Local settings restored.",
+                    true);
+            }
 
 			if (isClientNow &&
 				!_clearedForCurrentConnection)
@@ -486,9 +446,6 @@ namespace JunctionMaintenance
 				return;
 			}
 
-			// NEW:
-			// Sobald ein gültiger Snapshot angekommen ist,
-			// werden keine weiteren Ready-Anfragen benötigt.
 			if (_authoritativeSnapshotReceived)
 			{
 				return;
@@ -504,9 +461,6 @@ namespace JunctionMaintenance
 				return;
 			}
 
-			// NEW:
-			// Alle zwei Sekunden erneut versuchen,
-			// bis der Host tatsächlich einen Snapshot schickt.
 			if (Time.unscaledTime <
 				_nextReadyRequestTime)
 			{
@@ -538,9 +492,7 @@ namespace JunctionMaintenance
 				true);
 		}
 
-        public void SendDamageReport(
-			string junctionKey,
-			float damageToAdd)
+        public void SendDamageReport(string junctionKey,float damageToAdd)
 		{
 			if (string.IsNullOrWhiteSpace(junctionKey))
 			{
@@ -555,9 +507,6 @@ namespace JunctionMaintenance
 				return;
 			}
 
-			// CHANGE:
-			// Solange der Client nicht vollständig mit dem Host synchronisiert ist,
-			// darf die Meldung nicht verworfen werden.
 			if (!_registered ||
 				_client == null ||
 				!_authoritativeSnapshotReceived)
@@ -589,11 +538,7 @@ namespace JunctionMaintenance
 				safeDamage);
 		}
 		
-		// NEW:
-		// Versendet ein Schadenspaket nur bei vollständig verfügbarer Verbindung.
-		private void SendDamagePacketImmediately(
-			string junctionKey,
-			float damageToAdd)
+		private void SendDamagePacketImmediately(string junctionKey,float damageToAdd)
 		{
 			if (_client == null ||
 				string.IsNullOrWhiteSpace(junctionKey))
@@ -621,8 +566,6 @@ namespace JunctionMaintenance
 				true);
 		}
 
-		// NEW:
-		// Nach dem Host-Snapshot alle während des Ladens entstandenen Schäden senden.
 		private void FlushPendingDamageReports()
 		{
 			if (!_registered ||
@@ -658,11 +601,7 @@ namespace JunctionMaintenance
 				true);
 		}
 
-		public void SendRepairReport(
-			string junctionKey,
-			float repairAmount,
-			double moneyAmount,
-			bool isReward)
+		public void SendRepairReport(string junctionKey,float repairAmount,double moneyAmount,bool isReward)
 		{
 			if (!_registered ||
 				_client == null ||
@@ -709,8 +648,7 @@ namespace JunctionMaintenance
 				true);
 		}
 
-        private void OnJunctionStateReceived(
-            ClientBoundJunctionStatePacket packet)
+        private void OnJunctionStateReceived(ClientBoundJunctionStatePacket packet)
         {
             if (packet == null ||
                 string.IsNullOrWhiteSpace(packet.JunctionKey))
@@ -721,8 +659,6 @@ namespace JunctionMaintenance
             float damage =
                 Mathf.Clamp01(packet.Damage);
 
-            // NEW:
-            // Absoluten Serverzustand übernehmen.
             DamageStore.Set(
                 packet.JunctionKey,
                 damage);
@@ -735,8 +671,7 @@ namespace JunctionMaintenance
             RefreshOpenCareerManager();
         }
 
-        private void OnSnapshotReceived(
-            ClientBoundJunctionSnapshotPacket packet)
+        private void OnSnapshotReceived(ClientBoundJunctionSnapshotPacket packet)
         {
             if (packet == null ||
                 packet.JunctionKeys == null ||
@@ -788,61 +723,46 @@ namespace JunctionMaintenance
             RefreshOpenCareerManager();
         }
 
-        private void OnSettingsReceived(
-            ClientBoundJunctionSettingsPacket packet)
+		private void OnSettingsReceived(ClientBoundJunctionSettingsPacket packet)
         {
-            if (packet == null ||
-                Main.Settings == null)
-            {
+            if (packet == null)
                 return;
-            }
 
-            Main.Settings.enableRandomFlip =
-                packet.EnableRandomFlip;
-
-            Main.Settings.safeNoFlipSpeedKmh =
-                packet.SafeNoFlipSpeedKmh;
-
-            Main.Settings.flipMultiplierPercent =
-                packet.FlipMultiplierPercent;
-
-            Main.Settings.flipCooldownAfterForcedSec =
-                packet.FlipCooldownAfterForcedSec;
-
-            Main.Settings.repairRadius =
-                packet.RepairRadius;
-
-            Main.Settings.repairAmountPercent =
-                packet.RepairAmountPercent;
-
-            Main.Settings.repairVehicleSearchRadius =
-                packet.RepairVehicleSearchRadius;
-
-            Main.Settings.maxVehicleStandingSpeedKmh =
-                packet.MaxVehicleStandingSpeedKmh;
-
-            Main.Settings.maxRepairCostFull =
-                packet.MaxRepairCostFull;
-
-            Main.Settings.maxRepairRewardFull =
-                packet.MaxRepairRewardFull;
-
-            Main.Settings.maintenanceLicensePrice =
-                packet.MaintenanceLicensePrice;
-
-            Main.Settings.BlockManualSwitchAtFullDamage =
-                packet.BlockManualSwitchAtFullDamage;
+            RepairMode hostRepairMode =
+                RepairMode.Penalty;
 
             if (Enum.IsDefined(
                     typeof(RepairMode),
                     packet.RepairMode))
             {
-                Main.Settings.repairMode =
+                hostRepairMode =
                     (RepairMode)packet.RepairMode;
             }
 
+            Settings hostSettings =
+                new Settings
+                {
+                    logging = Main.LocalSettings != null && Main.LocalSettings.logging,
+                    enableRandomFlip = packet.EnableRandomFlip,
+                    safeNoFlipSpeedKmh = Mathf.Max(0f,packet.SafeNoFlipSpeedKmh),
+                    flipMultiplierPercent = Mathf.Clamp(packet.FlipMultiplierPercent,0.01f,0.50f),
+                    flipCooldownAfterForcedSec = Mathf.Max(0f,packet.FlipCooldownAfterForcedSec),
+                    repairRadius = Mathf.Max(0f,packet.RepairRadius),
+                    repairAmountPercent = Mathf.Clamp01(packet.RepairAmountPercent),
+                    repairVehicleSearchRadius = Mathf.Max(0f,packet.RepairVehicleSearchRadius),
+                    maxVehicleStandingSpeedKmh = Mathf.Max(0f,packet.MaxVehicleStandingSpeedKmh),
+                    maxRepairCostFull = Mathf.Max(0f,packet.MaxRepairCostFull),
+                    maxRepairRewardFull = Mathf.Max(0f,packet.MaxRepairRewardFull),
+                    maintenanceLicensePrice = Mathf.Max(0f,packet.MaintenanceLicensePrice),
+                    BlockManualSwitchAtFullDamage = packet.BlockManualSwitchAtFullDamage,
+                    repairMode = hostRepairMode
+                };
+
+            Main.UseTemporaryHostSettings(hostSettings);
+            MaintenanceLicense.ReapplyConfiguredPrice();
+
             Main.Log(
-                "[MP] Host settings applied.",
+                "[MP] Temporary host settings applied.",
                 true);
 
             RefreshOpenCareerManager();
@@ -865,24 +785,26 @@ namespace JunctionMaintenance
             }
         }
 
-        private void OnDestroy()
-		{
-			if (Instance == this)
-			{
-				Instance = null;
-			}
+		private void OnDestroy()
+        {
+            Main.RestoreLocalSettings();
+            MaintenanceLicense.ReapplyConfiguredPrice();
 
-			_client = null;
-			_registered = false;
-			_readyPacketSent = false;
-			_wasMultiplayerClient = false;
-			_clearedForCurrentConnection = false;
+            if (Instance == this)
+            {
+                Instance = null;
+            }
 
-			// NEW
-			_authoritativeSnapshotReceived = false;
-			_nextReadyRequestTime = 0f;
-			_pendingDamageReports.Clear();
-		}
+            _client = null;
+            _registered = false;
+            _readyPacketSent = false;
+            _wasMultiplayerClient = false;
+            _clearedForCurrentConnection = false;
+
+            _authoritativeSnapshotReceived = false;
+            _nextReadyRequestTime = 0f;
+            _pendingDamageReports.Clear();
+        }
     }
 
     // ============================================================

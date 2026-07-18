@@ -15,49 +15,145 @@ namespace JunctionMaintenance
     public class Main
     {
         public static UnityModManager.ModEntry Mod;
+        public static Settings LocalSettings;
         public static Settings Settings;
         public static bool Enabled;
         private static Harmony _harmony;
 		public static bool HasCustomLicensesMod;
+		
+		
+        internal static void UseTemporaryHostSettings(Settings hostSettings)
+        {
+            if (hostSettings == null)
+                return;
+
+            if (Settings != null)
+            {
+                foreach (
+                    System.Collections.Generic.KeyValuePair<
+                        string,
+                        float> entry
+                    in Settings.DamageMap)
+                {
+                    if (string.IsNullOrWhiteSpace(entry.Key))
+                        continue;
+
+                    float value =
+                        Mathf.Clamp01(entry.Value);
+
+                    if (value <= 0.0001f)
+                        continue;
+
+                    hostSettings.DamageMap[entry.Key] =
+                        value;
+                }
+            }
+
+            Settings = hostSettings;
+
+            Log(
+                "[MP] Temporary host settings activated. " +
+                "Local settings remain unchanged.",
+                true);
+        }
+
+        internal static void RestoreLocalSettings()
+        {
+            if (LocalSettings == null)
+                return;
+
+            Settings = LocalSettings.CloneConfiguration();
+
+            Log(
+                "[MP] Local JunctionMaintenance settings restored.",
+                true);
+        }
+
+        private static void SaveLocalSettings(UnityModManager.ModEntry modEntry)
+        {
+            if (LocalSettings == null ||
+                Settings == null)
+            {
+                return;
+            }
+
+            LocalSettings.CopyConfigurationFrom(Settings);
+            LocalSettings.Save(modEntry);
+        }
+
 
         static bool Load(UnityModManager.ModEntry modEntry)
         {
             Mod = modEntry;
-
-            SelfHealSettingsFile(modEntry);
-			
+            SelfHealSettingsFile(modEntry);			
 			HasCustomLicensesMod = UnityModManager.modEntries.Any(m => m.Info.Id.Equals("DVCustomLicenses", StringComparison.OrdinalIgnoreCase));
 
 			Log("[JunctionMaintenance] DVCustomLicenses installed: " + HasCustomLicensesMod, true);
 
-            try
+			try
             {
-                Settings = Settings.Load<Settings>(modEntry);
+                LocalSettings =
+                    UnityModManager.ModSettings
+                        .Load<Settings>(
+                            modEntry);
             }
             catch (Exception ex)
             {
-                Log("Settings.Load failed, creating defaults. " + ex, force: true);
-                Settings = new Settings();
-                try { Settings.Save(modEntry); } catch (Exception ex2) { Log("Settings.Save failed: " + ex2, force: true); }
+                Log(
+                    "Settings.Load failed, creating defaults. " +
+                    ex,
+                    force: true);
+
+                LocalSettings = new Settings();
+
+                try
+                {
+                    LocalSettings.Save(modEntry);
+                }
+                catch (Exception ex2)
+                {
+                    Log(
+                        "Settings.Save failed: " +
+                        ex2,
+                        force: true);
+                }
+            }
+
+            if (LocalSettings == null)
+            {
+                LocalSettings = new Settings();
             }
 			
-			// FORCE MODE BASED ON CUSTOM LICENSE MOD
 			if (HasCustomLicensesMod)
-			{
-				if (Settings.repairMode != RepairMode.Dynamic)
-				{
-					Settings.repairMode = RepairMode.Dynamic;
-					Log("[JunctionMaintenance] Forcing Dynamic mode (DVCustomLicenses detected)", true);
-				}
-			}
-			else
-			{
-				if (Settings.repairMode == RepairMode.Dynamic)
-				{
-					Settings.repairMode = RepairMode.Penalty;
-					Log("[JunctionMaintenance] Dynamic mode disabled (DVCustomLicenses missing) -> fallback to Penalty", true);
-				}
-			}
+            {
+                if (LocalSettings.repairMode != RepairMode.Dynamic)
+                {
+                    LocalSettings.repairMode = RepairMode.Dynamic;
+
+                    Log(
+                        "[JunctionMaintenance] " +
+                        "Forcing Dynamic mode " +
+                        "(DVCustomLicenses detected)",
+                        true);
+                }
+            }
+            else
+            {
+                if (LocalSettings.repairMode == RepairMode.Dynamic)
+                {
+                    LocalSettings.repairMode =
+                        RepairMode.Penalty;
+
+                    Log(
+                        "[JunctionMaintenance] " +
+                        "Dynamic mode disabled " +
+                        "(DVCustomLicenses missing) -> " +
+                        "fallback to Penalty",
+                        true);
+                }
+            }
+
+            Settings = LocalSettings.CloneConfiguration();
 
             modEntry.OnToggle  = OnToggle;
             modEntry.OnGUI     = OnGUI;
@@ -370,7 +466,7 @@ namespace JunctionMaintenance
 				return;
 			}
 			
-            Settings.Save(modEntry);
+            SaveLocalSettings(modEntry);
 			
 			JM_Multiplayer.BroadcastHostSettings();
 			

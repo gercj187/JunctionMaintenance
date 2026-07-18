@@ -49,8 +49,58 @@ namespace JunctionMaintenance
         private Dictionary<string, float> _damageMap = new Dictionary<string, float>(1024);
 
         [XmlIgnore]
-        public Dictionary<string, float> DamageMap => _damageMap;
+        public Dictionary<string, float> DamageMap => _damageMap;		
+		
+        public Settings CloneConfiguration()
+        {
+            return new Settings
+            {
+                logging = logging,
 
+                enableRandomFlip = enableRandomFlip,
+                safeNoFlipSpeedKmh = safeNoFlipSpeedKmh,
+                flipMultiplierPercent = flipMultiplierPercent,
+                flipCooldownAfterForcedSec = flipCooldownAfterForcedSec,
+                repairRadius = repairRadius,
+                repairAmountPercent = repairAmountPercent,
+                repairVehicleSearchRadius = repairVehicleSearchRadius,
+                maxVehicleStandingSpeedKmh = maxVehicleStandingSpeedKmh,
+                maxRepairCostFull = maxRepairCostFull,
+                maxRepairRewardFull = maxRepairRewardFull,
+                maintenanceLicensePrice = maintenanceLicensePrice,
+                BlockManualSwitchAtFullDamage = BlockManualSwitchAtFullDamage,
+                repairMode = repairMode
+            };
+        }
+		
+        public void CopyConfigurationFrom(Settings source)
+        {
+            if (source == null)
+                return;
+
+            logging = source.logging;
+            enableRandomFlip = source.enableRandomFlip;
+            safeNoFlipSpeedKmh = source.safeNoFlipSpeedKmh;
+            flipMultiplierPercent = source.flipMultiplierPercent;
+            flipCooldownAfterForcedSec = source.flipCooldownAfterForcedSec;
+            repairRadius = source.repairRadius;
+            repairAmountPercent = source.repairAmountPercent;
+            repairVehicleSearchRadius = source.repairVehicleSearchRadius;
+            maxVehicleStandingSpeedKmh = source.maxVehicleStandingSpeedKmh;
+            maxRepairCostFull = source.maxRepairCostFull;
+            maxRepairRewardFull = source.maxRepairRewardFull;
+            maintenanceLicensePrice = source.maintenanceLicensePrice;
+            BlockManualSwitchAtFullDamage = source.BlockManualSwitchAtFullDamage;
+            repairMode = source.repairMode;
+        }
+
+        public override void Save(UnityModManager.ModEntry modEntry)
+        {
+            if (JM_Multiplayer.IsClient)
+                return;
+
+            Save(this, modEntry);
+        }
     }
 
     [Serializable]
@@ -254,14 +304,14 @@ namespace JunctionMaintenance
 					return;
 				}
 				
-				if (!MultiplayerAPI.Instance.IsHost)
-				{
-					Main.Log(
-						"LoadFromSaveData skipped: Player is Client.",
-						true);
+                if (JM_Multiplayer.IsClient)
+                {
+                    Main.Log(
+                        "LoadFromSaveData skipped: Player is Client.",
+                        true);
 
-					return;
-				}
+                    return;
+                }
 
 				if (!force &&
 					ReferenceEquals(
