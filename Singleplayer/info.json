@@ -1,16 +1,16 @@
-{
-	"Id": "JunctionMaintenance",
-	"Version": "1.03.0",
-	"DisplayName": "Junction Maintenance",
-	"Author": "CJ187",
-	"Credits": "Coookie, NotAnOption and ChatGPT",
-	"AssemblyName": "JunctionMaintenance.dll",
-	"EntryMethod": "JunctionMaintenance.Main.Load",
-	"ManagerVersion": "0.27.2",
-	"HomePage": "https://www.nexusmods.com/derailvalley/mods/1251",
-	"Repository": "https://raw.githubusercontent.com/gercj187/JunctionMaintenance/refs/heads/main/Singleplayer/repository.json",
-	"LoadAfter": [
-		"DVCustomLicenses"
-	],
-	"MultiplayerCompatibility": "Incompatible"
+﻿{
+    "Id":  "JunctionMaintenance",
+    "Version":  "1.04.00",
+    "DisplayName":  "Junction Maintenance",
+    "Author":  "CJ187",
+    "Credits":  "code by ClaudeAi",
+    "AssemblyName":  "JunctionMaintenance.dll",
+    "EntryMethod":  "JunctionMaintenance.Main.Load",
+    "ManagerVersion":  "0.27.2",
+    "HomePage":  "https://www.nexusmods.com/derailvalley/mods/1251",
+    "Repository":  "https://raw.githubusercontent.com/gercj187/JunctionMaintenance/refs/heads/main/Singleplayer/repository.json",
+    "LoadAfter":  [
+                      "DVCustomLicenses"
+                  ],
+    "MultiplayerCompatibility":  "Incompatible"
 }
