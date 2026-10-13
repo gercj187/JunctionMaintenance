@@ -27,6 +27,13 @@
 		<Reference Include="DV.RailTrack">
 			<HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\DV.RailTrack.dll</HintPath>
 		</Reference>
+		<!-- Weichen-Fahrwege: Abstand zum Gleis (RailTrack.GetClosestPoint) -->
+		<Reference Include="DV.PointSet">
+			<HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\DV.PointSet.dll</HintPath>
+		</Reference>
+		<Reference Include="net.smkd.vector3d">
+			<HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\net.smkd.vector3d.dll</HintPath>
+		</Reference>
 		<Reference Include="DV.BrakeSystem">
 			<HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\DV.BrakeSystem.dll</HintPath>
 		</Reference>
@@ -34,7 +41,7 @@
 			<HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\DV.UserManagement.dll</HintPath>
 		</Reference>
 		<Reference Include="Newtonsoft.Json">
-			<HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\Newtonsoft.dll</HintPath>
+			<HintPath>S:\SteamLibrary\steamapps\common\Derail Valley\DerailValley_Data\Managed\Newtonsoft.Json.dll</HintPath>
 		</Reference>
 	</ItemGroup>
 
