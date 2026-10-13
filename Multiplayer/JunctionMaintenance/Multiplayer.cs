@@ -1,5 +1,21 @@
 // File: Multiplayer.cs
 // Namespace: JunctionMaintenance
+// Multiplayer (dv-multiplayer, MultiplayerAPI). Der Host ist maßgeblich:
+//
+//   Schaden      Auffahren: Client meldet dem Host (ServerBoundJunctionDamagePacket), Host übernimmt und verteilt.
+//                Entgleisung, Mitschleifen, Explosion: nur der Host wertet aus (sonst doppelt gezählt).
+//   Reparatur    Client: Schaden + Sperre sofort lokal, Meldung an den Host (Weiche, Anteil, Wagen-ID).
+//                Host prüft (Schaden vorhanden, Weiche nicht schon in Reparatur), rechnet Preis bzw.
+//                Vergütung selbst (inkl. Versicherung des Hosts) und bucht auf der Wallet des Hosts.
+//                Bei Erfolg: Zustand + Reparaturstart an alle; sonst Abbruch an den Client.
+//                Host: Reparatur wie im Einzelspieler, danach Zustand + Reparaturstart an alle.
+//   Sperre       Laufende Reparaturen (Weiche, Name, Restdauer, Wagen-ID) kennen alle Rechner:
+//                Weiche nicht umstellbar, Liste in der Nähe zeigt den Fortschritt, der auslösende
+//                Zug wird festgehalten (auf Host und Client).
+//   Einstellungen  Host schickt seine Einstellungen als XML (alle Felder, neue Felder automatisch mit).
+//                Der Client verwendet sie nur für die Sitzung; seine eigenen bleiben unverändert.
+//   Spielstand   Nur der Host lädt und speichert die Weichenschäden. Ein Client bekommt nach dem Laden
+//                einen Snapshot (Schäden + laufende Reparaturen).
 
 using System;
 using System.Collections.Generic;
@@ -11,22 +27,24 @@ using UnityEngine;
 namespace JunctionMaintenance
 {
     // ============================================================
-    // PACKETS
+    // PAKETE
     // ============================================================
-	
+
     public class ServerBoundJunctionDamagePacket : IPacket
     {
         public string JunctionKey { get; set; } = string.Empty;
         public float DamageToAdd { get; set; }
     }
 
-	public class ServerBoundJunctionRepairPacket : IPacket
-	{
-		public string JunctionKey { get; set; } = string.Empty;
-		public float RepairAmount { get; set; }
-		public double MoneyAmount { get; set; }
-		public bool IsReward { get; set; }
-	}
+    public class ServerBoundJunctionRepairPacket : IPacket
+    {
+        public string JunctionKey { get; set; } = string.Empty;
+        public string JunctionName { get; set; } = string.Empty;
+        public float RepairAmount { get; set; }
+        public double MoneyAmount { get; set; }     // nur zur Kontrolle, der Host rechnet selbst
+        public bool IsReward { get; set; }          // nur zur Kontrolle
+        public string CarId { get; set; } = string.Empty;
+    }
 
     public class ServerBoundJunctionReadyPacket : IPacket
     {
@@ -43,50 +61,47 @@ namespace JunctionMaintenance
     {
         public string[] JunctionKeys { get; set; } = Array.Empty<string>();
         public float[] DamageValues { get; set; } = Array.Empty<float>();
+
+        // Laufende Reparaturen
+        public string[] RepairKeys { get; set; } = Array.Empty<string>();
+        public string[] RepairNames { get; set; } = Array.Empty<string>();
+        public string[] RepairCarIds { get; set; } = Array.Empty<string>();
+        public float[] RepairRemaining { get; set; } = Array.Empty<float>();
     }
 
     public class ClientBoundJunctionSettingsPacket : IPacket
     {
-        public bool EnableRandomFlip { get; set; }
-        public float SafeNoFlipSpeedKmh { get; set; }
-        public float FlipMultiplierPercent { get; set; }
-        public float FlipCooldownAfterForcedSec { get; set; }
+        public string SettingsXml { get; set; } = string.Empty;
+    }
 
-        public float RepairRadius { get; set; }
-        public float RepairAmountPercent { get; set; }
-        public float RepairVehicleSearchRadius { get; set; }
-        public float MaxVehicleStandingSpeedKmh { get; set; }
+    public class ClientBoundJunctionRepairStartedPacket : IPacket
+    {
+        public string JunctionKey { get; set; } = string.Empty;
+        public string JunctionName { get; set; } = string.Empty;
+        public float Duration { get; set; }
+        public string CarId { get; set; } = string.Empty;
+    }
 
-        public float MaxRepairCostFull { get; set; }
-        public float MaxRepairRewardFull { get; set; }
-        public float MaintenanceLicensePrice { get; set; }
-
-        public bool BlockManualSwitchAtFullDamage { get; set; }
-        public int RepairMode { get; set; }
+    public class ClientBoundJunctionRepairRejectedPacket : IPacket
+    {
+        public string JunctionKey { get; set; } = string.Empty;
+        public float Damage { get; set; }           // Schaden laut Host
     }
 
     // ============================================================
-    // CENTRAL API
+    // ZENTRALE SCHNITTSTELLE
     // ============================================================
 
     internal static class JM_Multiplayer
     {
-        private static GameObject _runtimeObject;
+        private static GameObject runtimeObject;
 
         public static bool IsHost
         {
             get
             {
-                try
-                {
-                    return MultiplayerAPI.Instance != null &&
-                           MultiplayerAPI.Server != null &&
-                           MultiplayerAPI.Instance.IsHost;
-                }
-                catch
-                {
-                    return false;
-                }
+                try { return MultiplayerAPI.Instance != null && MultiplayerAPI.Server != null && MultiplayerAPI.Instance.IsHost; }
+                catch { return false; }
             }
         }
 
@@ -94,161 +109,96 @@ namespace JunctionMaintenance
         {
             get
             {
-                try
-                {
-                    return MultiplayerAPI.Instance != null &&
-                           MultiplayerAPI.Client != null &&
-                           !MultiplayerAPI.Instance.IsHost;
-                }
-                catch
-                {
-                    return false;
-                }
+                try { return MultiplayerAPI.Instance != null && MultiplayerAPI.Client != null && !MultiplayerAPI.Instance.IsHost; }
+                catch { return false; }
             }
         }
 
-        public static bool IsMultiplayer
-        {
-            get
-            {
-                return IsHost || IsClient;
-            }
-        }
+        public static bool IsMultiplayer { get { return IsHost || IsClient; } }
 
         public static void Initialize()
         {
-            if (_runtimeObject != null)
+            if (runtimeObject != null) return;
+
+            try
             {
-                return;
+                runtimeObject = new GameObject("JunctionMaintenance_Multiplayer");
+                UnityEngine.Object.DontDestroyOnLoad(runtimeObject);
+                runtimeObject.AddComponent<JunctionMaintenanceMPClient>();
+                runtimeObject.AddComponent<JunctionMaintenanceMPServer>();
+                Main.Log("[MP] Multiplayer runtime created.");
             }
-
-            _runtimeObject = new GameObject("JunctionMaintenance_Multiplayer");
-
-            UnityEngine.Object.DontDestroyOnLoad(_runtimeObject);
-
-            _runtimeObject.AddComponent<JunctionMaintenanceMPClient>();
-            _runtimeObject.AddComponent<JunctionMaintenanceMPServer>();
-
-            Main.Log(
-                "[MP] Multiplayer runtime created.",
-                true);
+            catch (Exception e)
+            {
+                Main.Error("[MP] Multiplayer runtime could not be created: " + e);
+            }
         }
 
-        // ========================================================
-        // DAMAGE
-        // ========================================================
-		
-        public static void ReportDamage(string junctionKey,float damageToAdd)
+        // ---------- Schaden ----------
+
+        public static void ReportDamage(string junctionKey, float damageToAdd01)
         {
-            if (string.IsNullOrWhiteSpace(junctionKey))
-            {
-                return;
-            }
+            if (string.IsNullOrWhiteSpace(junctionKey)) return;
 
-            float clampedDamage =
-                Mathf.Clamp01(damageToAdd);
-
-            if (clampedDamage <= 0f)
-            {
-                return;
-            }
+            float dmg = Mathf.Clamp01(damageToAdd01);
+            if (dmg <= 0f) return;
 
             if (IsClient)
             {
-                JunctionMaintenanceMPClient.Instance?
-                    .SendDamageReport(
-                        junctionKey,
-                        clampedDamage);
-
+                JunctionMaintenanceMPClient.Instance?.SendDamageReport(junctionKey, dmg);
                 return;
             }
 
-            if (IsHost)
+            if (IsHost && JunctionMaintenanceMPServer.Instance != null)
             {
-                JunctionMaintenanceMPServer.Instance?
-                    .ApplyDamageAndBroadcast(
-                        junctionKey,
-                        clampedDamage);
-
+                JunctionMaintenanceMPServer.Instance.ApplyDamageAndBroadcast(junctionKey, dmg);
                 return;
             }
 
-            DamageStore.AddPercent(junctionKey,clampedDamage);
+            DamageStore.AddPercent(junctionKey, dmg);
         }
 
-        // ========================================================
-        // REPAIR
-        // ========================================================
+        // ---------- Reparatur ----------
 
-		public static void ReportRepair(
-			string junctionKey,
-			float repairAmount,
-			double moneyAmount,
-			bool isReward)
-		{
-			if (string.IsNullOrWhiteSpace(junctionKey))
-			{
-				return;
-			}
+        // Client: Reparatur an den Host melden (Schaden und Sperre sind lokal schon gesetzt)
+        public static void ReportRepair(string junctionKey, string junctionName, float repair01, RepairQuote q, string carId)
+        {
+            if (!IsClient || string.IsNullOrWhiteSpace(junctionKey)) return;
+            JunctionMaintenanceMPClient.Instance?.SendRepairReport(junctionKey, junctionName, repair01, q, carId);
+        }
 
-			float clampedRepair =
-				Mathf.Clamp01(repairAmount);
+        // Host: eigene Reparatur an alle Clients verteilen
+        public static void HostRepairStarted(string junctionKey, string junctionName, float damageAfter, float duration, string carId)
+        {
+            if (!IsHost || JunctionMaintenanceMPServer.Instance == null) return;
+            JunctionMaintenanceMPServer.Instance.BroadcastState(junctionKey, damageAfter);
+            JunctionMaintenanceMPServer.Instance.BroadcastRepairStarted(junctionKey, junctionName, duration, carId);
+        }
 
-			if (clampedRepair <= 0f)
-			{
-				return;
-			}
-
-			double safeMoneyAmount =
-				Math.Max(
-					0.0,
-					moneyAmount);
-
-			if (IsClient)
-			{
-				JunctionMaintenanceMPClient.Instance?
-					.SendRepairReport(
-						junctionKey,
-						clampedRepair,
-						safeMoneyAmount,
-						isReward);
-
-				return;
-			}
-
-			if (IsHost)
-			{
-				JunctionMaintenanceMPServer.Instance?
-					.ApplyRepairAndBroadcast(
-						junctionKey,
-						clampedRepair);
-
-				return;
-			}
-
-			float before = DamageStore.Get(junctionKey);
-
-			float after =
-				Mathf.Max(
-					0f,
-					before - Mathf.Min(
-						before,
-						clampedRepair));
-
-			DamageStore.Set(
-				junctionKey,
-				after);
-		}
+        // ---------- Einstellungen ----------
 
         public static void BroadcastHostSettings()
         {
-            if (!IsHost)
-            {
-                return;
-            }
+            if (!IsHost) return;
+            JunctionMaintenanceMPServer.Instance?.SendSettingsToAll();
+        }
 
-            JunctionMaintenanceMPServer.Instance?
-                .SendSettingsToAll();
+        // ---------- Bildschirm aktualisieren ----------
+
+        internal static void RefreshOpenCareerManager()
+        {
+            try
+            {
+                if (JM_ListState.Active && !JM_Payment.Active)
+                {
+                    JM_ListState.Rebuild();
+                    JM_ListState.Render();
+                }
+            }
+            catch (Exception e)
+            {
+                Main.Error("[MP] Career Manager refresh failed: " + e);
+            }
         }
     }
 
@@ -258,1111 +208,565 @@ namespace JunctionMaintenance
 
     internal class JunctionMaintenanceMPClient : MonoBehaviour
     {
-        public static JunctionMaintenanceMPClient Instance
-        {
-            get;
-            private set;
-        }
-
-        private IClient _client;
-        private bool _registered;
-        private bool _readyPacketSent;		
-		private bool _wasMultiplayerClient;
-		private bool _clearedForCurrentConnection;
-		private bool _authoritativeSnapshotReceived;
-		private float _nextReadyRequestTime;
-		private readonly Dictionary<string, float> _pendingDamageReports =
-			new Dictionary<string, float>(
-				StringComparer.Ordinal);
-
-		private void Awake()
-		{
-			if (Instance == null)
-			{
-				Instance = this;
-			}
-			else if (Instance != this)
-			{
-				Destroy(this);
-				return;
-			}
-
-			_wasMultiplayerClient = JM_Multiplayer.IsClient;
-
-			RefreshConnectionState();
-		}
-
-        private void Update()
-		{
-			RefreshConnectionState();
-
-			if (!_registered)
-			{
-				TryRegisterClient();
-			}
-
-			TrySendReadyPacket();
-		}
-		
-		private void RefreshConnectionState()
-		{
-			bool isClientNow =
-				JM_Multiplayer.IsClient;
-
-			IClient currentClient =
-				MultiplayerAPI.Client;
-
-			bool clientObjectChanged =
-				!ReferenceEquals(
-					_client,
-					currentClient);
-
-			bool roleChanged =
-				_wasMultiplayerClient !=
-				isClientNow;
-
-			if (clientObjectChanged)
-            {
-                if (_client != null)
-                {
-                    Main.RestoreLocalSettings();
-                    MaintenanceLicense.ReapplyConfiguredPrice();
-                }
-
-                _client =currentClient;
-
-                _registered = false;
-                _readyPacketSent = false;
-
-                _authoritativeSnapshotReceived = false;
-                _nextReadyRequestTime = 0f;
-
-                _clearedForCurrentConnection = false;
-
-                _pendingDamageReports.Clear();
-
-                Main.Log(
-                    "[MP] Client connection object changed. " +
-                    "Local settings restored and synchronization " +
-                    "state reset.",
-                    true);
-            }
-
-			if (roleChanged)
-            {
-                bool wasClientBefore =_wasMultiplayerClient;
-                _wasMultiplayerClient =isClientNow;
-
-                _readyPacketSent = false;
-                _authoritativeSnapshotReceived = false;
-                _nextReadyRequestTime = 0f;
-                _clearedForCurrentConnection = false;
-
-                _pendingDamageReports.Clear();
-
-                if (wasClientBefore &&!isClientNow)
-                {
-                    Main.RestoreLocalSettings();
-                    MaintenanceLicense.ReapplyConfiguredPrice();
-                }
-
-                Main.Log(
-                    isClientNow
-                        ? "[MP] Entered multiplayer as client."
-                        : "[MP] Left multiplayer client state. " +
-                          "Local settings restored.",
-                    true);
-            }
-
-			if (isClientNow &&
-				!_clearedForCurrentConnection)
-			{
-				// Lokalen Singleplayer-Zustand verwerfen.
-				DamageStore.ReplaceAll(
-					new Dictionary<string, float>());
-
-				_clearedForCurrentConnection = true;
-
-				Main.Log(
-					"[MP] Local junction damage cleared. " +
-					"Waiting for authoritative host snapshot.",
-					true);
-
-				RefreshOpenCareerManager();
-			}
-
-			if (!isClientNow)
-			{
-				_readyPacketSent = false;
-				_authoritativeSnapshotReceived = false;
-				_nextReadyRequestTime = 0f;
-				_clearedForCurrentConnection = false;
-
-				_pendingDamageReports.Clear();
-			}
-		}
-
-        private void TryRegisterClient()
-        {
-            if (_registered)
-            {
-                return;
-            }
-
-            _client =
-                MultiplayerAPI.Client;
-
-            if (_client == null)
-            {
-                return;
-            }
-
-            _client.RegisterPacket<ClientBoundJunctionStatePacket>(
-                OnJunctionStateReceived);
-
-            _client.RegisterPacket<ClientBoundJunctionSnapshotPacket>(
-                OnSnapshotReceived);
-
-            _client.RegisterPacket<ClientBoundJunctionSettingsPacket>(
-                OnSettingsReceived);
-
-            _registered = true;
-
-            Main.Log(
-                "[MP] Client packet handlers registered.",
-                true);
-        }
-
-        private void TrySendReadyPacket()
-		{
-			if (!_registered ||
-				_client == null)
-			{
-				return;
-			}
-
-			if (!JM_Multiplayer.IsClient)
-			{
-				return;
-			}
-
-			if (_authoritativeSnapshotReceived)
-			{
-				return;
-			}
-
-			if (PlayerManager.PlayerTransform == null)
-			{
-				return;
-			}
-
-			if (!AStartGameData.carsAndJobsLoadingFinished)
-			{
-				return;
-			}
-
-			if (Time.unscaledTime <
-				_nextReadyRequestTime)
-			{
-				return;
-			}
-
-			var packet =
-				new ServerBoundJunctionReadyPacket
-				{
-					Ready = true
-				};
-
-			_client.SendPacketToServer(
-				packet,
-				reliable: true);
-
-			bool wasAlreadySent =
-				_readyPacketSent;
-
-			_readyPacketSent = true;
-
-			_nextReadyRequestTime =
-				Time.unscaledTime + 2f;
-
-			Main.Log(
-				wasAlreadySent
-					? "[MP] Snapshot request repeated."
-					: "[MP] Client fully loaded. Snapshot requested.",
-				true);
-		}
-
-        public void SendDamageReport(string junctionKey,float damageToAdd)
-		{
-			if (string.IsNullOrWhiteSpace(junctionKey))
-			{
-				return;
-			}
-
-			float safeDamage =
-				Mathf.Clamp01(damageToAdd);
-
-			if (safeDamage <= 0f)
-			{
-				return;
-			}
-
-			if (!_registered ||
-				_client == null ||
-				!_authoritativeSnapshotReceived)
-			{
-				if (_pendingDamageReports.TryGetValue(
-						junctionKey,
-						out float pendingDamage))
-				{
-					_pendingDamageReports[junctionKey] =
-						Mathf.Clamp01(
-							pendingDamage + safeDamage);
-				}
-				else
-				{
-					_pendingDamageReports[junctionKey] =
-						safeDamage;
-				}
-
-				Main.Log(
-					$"[MP] Damage queued until synchronization: " +
-					$"{junctionKey} +{safeDamage * 100f:0.###}%",
-					true);
-
-				return;
-			}
-
-			SendDamagePacketImmediately(
-				junctionKey,
-				safeDamage);
-		}
-		
-		private void SendDamagePacketImmediately(string junctionKey,float damageToAdd)
-		{
-			if (_client == null ||
-				string.IsNullOrWhiteSpace(junctionKey))
-			{
-				return;
-			}
-
-			var packet =
-				new ServerBoundJunctionDamagePacket
-				{
-					JunctionKey =
-						junctionKey,
-
-					DamageToAdd =
-						Mathf.Clamp01(damageToAdd)
-				};
-
-			_client.SendPacketToServer(
-				packet,
-				reliable: true);
-
-			Main.Log(
-				$"[MP] Damage reported: {junctionKey} " +
-				$"+{damageToAdd * 100f:0.###}%",
-				true);
-		}
-
-		private void FlushPendingDamageReports()
-		{
-			if (!_registered ||
-				_client == null ||
-				!_authoritativeSnapshotReceived ||
-				_pendingDamageReports.Count == 0)
-			{
-				return;
-			}
-
-			var pendingCopy =
-				new Dictionary<string, float>(
-					_pendingDamageReports,
-					StringComparer.Ordinal);
-
-			_pendingDamageReports.Clear();
-
-			foreach (KeyValuePair<string, float> entry in pendingCopy)
-			{
-				if (string.IsNullOrWhiteSpace(entry.Key) ||
-					entry.Value <= 0f)
-				{
-					continue;
-				}
-
-				SendDamagePacketImmediately(
-					entry.Key,
-					entry.Value);
-			}
-
-			Main.Log(
-				$"[MP] Flushed {pendingCopy.Count} queued damage reports.",
-				true);
-		}
-
-		public void SendRepairReport(string junctionKey,float repairAmount,double moneyAmount,bool isReward)
-		{
-			if (!_registered ||
-				_client == null ||
-				string.IsNullOrWhiteSpace(junctionKey))
-			{
-				return;
-			}
-
-			float safeRepairAmount =
-				Mathf.Clamp01(repairAmount);
-
-			double safeMoneyAmount =
-				Math.Max(
-					0.0,
-					moneyAmount);
-
-			var packet =
-				new ServerBoundJunctionRepairPacket
-				{
-					JunctionKey =
-						junctionKey,
-
-					RepairAmount =
-						safeRepairAmount,
-
-					// NEW
-					MoneyAmount =
-						safeMoneyAmount,
-
-					// NEW
-					IsReward =
-						isReward
-				};
-
-			_client.SendPacketToServer(
-				packet,
-				reliable: true);
-
-			Main.Log(
-				$"[MP] Repair reported: {junctionKey}, " +
-				$"repair={safeRepairAmount * 100f:0.###}%, " +
-				$"mode={(isReward ? "EARN" : "PAY")}, " +
-				$"amount=${safeMoneyAmount:0.00}",
-				true);
-		}
-
-        private void OnJunctionStateReceived(ClientBoundJunctionStatePacket packet)
-        {
-            if (packet == null ||
-                string.IsNullOrWhiteSpace(packet.JunctionKey))
-            {
-                return;
-            }
-
-            float damage =
-                Mathf.Clamp01(packet.Damage);
-
-            DamageStore.Set(
-                packet.JunctionKey,
-                damage);
-
-            Main.Log(
-                $"[MP] Junction state received: " +
-                $"{packet.JunctionKey} = {damage * 100f:0.###}%",
-                false);
-
-            RefreshOpenCareerManager();
-        }
-
-        private void OnSnapshotReceived(ClientBoundJunctionSnapshotPacket packet)
-        {
-            if (packet == null ||
-                packet.JunctionKeys == null ||
-                packet.DamageValues == null)
-            {
-                return;
-            }
-
-            if (packet.JunctionKeys.Length !=
-                packet.DamageValues.Length)
-            {
-                Main.Log(
-                    "[MP] Invalid junction snapshot received.",
-                    true);
-                return;
-            }
-
-            var map =
-                new Dictionary<string, float>(
-                    packet.JunctionKeys.Length);
-
-            for (int i = 0;
-                 i < packet.JunctionKeys.Length;
-                 i++)
-            {
-                string key =
-                    packet.JunctionKeys[i];
-
-                if (string.IsNullOrWhiteSpace(key))
-                {
-                    continue;
-                }
-
-                map[key] =
-                    Mathf.Clamp01(
-                        packet.DamageValues[i]);
-            }
-
-            DamageStore.ReplaceAll(map);
-			
-			_authoritativeSnapshotReceived = true;
-			_readyPacketSent = true;
-
-            Main.Log(
-                $"[MP] Junction snapshot applied: {map.Count} entries.",
-                true);
-
-			FlushPendingDamageReports();
-            RefreshOpenCareerManager();
-        }
-
-		private void OnSettingsReceived(ClientBoundJunctionSettingsPacket packet)
-        {
-            if (packet == null)
-                return;
-
-            RepairMode hostRepairMode =
-                RepairMode.Penalty;
-
-            if (Enum.IsDefined(
-                    typeof(RepairMode),
-                    packet.RepairMode))
-            {
-                hostRepairMode =
-                    (RepairMode)packet.RepairMode;
-            }
-
-            Settings hostSettings =
-                new Settings
-                {
-                    logging = Main.LocalSettings != null && Main.LocalSettings.logging,
-                    enableRandomFlip = packet.EnableRandomFlip,
-                    safeNoFlipSpeedKmh = Mathf.Max(0f,packet.SafeNoFlipSpeedKmh),
-                    flipMultiplierPercent = Mathf.Clamp(packet.FlipMultiplierPercent,0.01f,0.50f),
-                    flipCooldownAfterForcedSec = Mathf.Max(0f,packet.FlipCooldownAfterForcedSec),
-                    repairRadius = Mathf.Max(0f,packet.RepairRadius),
-                    repairAmountPercent = Mathf.Clamp01(packet.RepairAmountPercent),
-                    repairVehicleSearchRadius = Mathf.Max(0f,packet.RepairVehicleSearchRadius),
-                    maxVehicleStandingSpeedKmh = Mathf.Max(0f,packet.MaxVehicleStandingSpeedKmh),
-                    maxRepairCostFull = Mathf.Max(0f,packet.MaxRepairCostFull),
-                    maxRepairRewardFull = Mathf.Max(0f,packet.MaxRepairRewardFull),
-                    maintenanceLicensePrice = Mathf.Max(0f,packet.MaintenanceLicensePrice),
-                    BlockManualSwitchAtFullDamage = packet.BlockManualSwitchAtFullDamage,
-                    repairMode = hostRepairMode
-                };
-
-            Main.UseTemporaryHostSettings(hostSettings);
-            MaintenanceLicense.ReapplyConfiguredPrice();
-
-            Main.Log(
-                "[MP] Temporary host settings applied.",
-                true);
-
-            RefreshOpenCareerManager();
-        }
-
-        private static void RefreshOpenCareerManager()
-        {
-            try
-            {
-                if (JM_CM_ListState.Active)
-                {
-                    JM_CM_ListState.Render();
-                }
-            }
-            catch (Exception e)
-            {
-                Main.Log(
-                    "[MP] Career Manager refresh failed: " + e,
-                    true);
-            }
-        }
-
-		private void OnDestroy()
-        {
-            Main.RestoreLocalSettings();
-            MaintenanceLicense.ReapplyConfiguredPrice();
-
-            if (Instance == this)
-            {
-                Instance = null;
-            }
-
-            _client = null;
-            _registered = false;
-            _readyPacketSent = false;
-            _wasMultiplayerClient = false;
-            _clearedForCurrentConnection = false;
-
-            _authoritativeSnapshotReceived = false;
-            _nextReadyRequestTime = 0f;
-            _pendingDamageReports.Clear();
-        }
-    }
-
-    // ============================================================
-    // SERVER
-    // ============================================================
-
-    internal class JunctionMaintenanceMPServer : MonoBehaviour
-    {
-        public static JunctionMaintenanceMPServer Instance
-        {
-            get;
-            private set;
-        }
-
-        private IServer _server;
-        private bool _initialized;
+        public static JunctionMaintenanceMPClient Instance { get; private set; }
+
+        private IClient client;
+        private bool registered;
+        private bool wasClient;
+        private bool clearedForConnection;
+        private bool snapshotReceived;
+        private float nextReadyRequest;
+
+        // Schäden, die vor dem Snapshot entstehen, werden gesammelt und danach gesendet
+        private readonly Dictionary<string, float> pendingDamage = new Dictionary<string, float>(StringComparer.Ordinal);
 
         private void Awake()
         {
-            if (Instance == null)
-            {
-                Instance = this;
-            }
+            if (Instance == null) Instance = this;
             else if (Instance != this)
             {
                 Destroy(this);
                 return;
             }
 
-            TryInitializeServer();
+            wasClient = JM_Multiplayer.IsClient;
+            RefreshConnectionState();
         }
 
         private void Update()
         {
-            if (!_initialized)
+            try
             {
-                TryInitializeServer();
+                RefreshConnectionState();
+                if (!registered) TryRegister();
+                TrySendReady();
+            }
+            catch (Exception e)
+            {
+                Main.Error("[MP] Client update failed: " + e);
             }
         }
 
-        private void TryInitializeServer()
+        private void ResetSyncState()
         {
-            if (_initialized)
-            {
-                return;
-            }
-
-            _server =
-                MultiplayerAPI.Server;
-
-            if (_server == null)
-            {
-                return;
-            }
-
-            // NEW: Client -> Server
-            _server.RegisterPacket<ServerBoundJunctionDamagePacket>(
-                OnDamageReported);
-
-            _server.RegisterPacket<ServerBoundJunctionRepairPacket>(
-                OnRepairReported);
-
-            _server.RegisterPacket<ServerBoundJunctionReadyPacket>(
-                OnClientReady);
-
-            _initialized = true;
-
-            Main.Log(
-                "[MP] Server packet handlers registered.",
-                true);
+            registered = false;
+            snapshotReceived = false;
+            nextReadyRequest = 0f;
+            clearedForConnection = false;
+            pendingDamage.Clear();
         }
 
-        private void OnDamageReported(
-            ServerBoundJunctionDamagePacket packet,
-            IPlayer sender)
+        private void RefreshConnectionState()
         {
-            if (packet == null ||
-                sender == null ||
-                string.IsNullOrWhiteSpace(packet.JunctionKey))
+            bool isClientNow = JM_Multiplayer.IsClient;
+            IClient current = MultiplayerAPI.Client;
+
+            // Neue Verbindung (oder getrennt): eigene Einstellungen zurück, Zustand neu aufbauen
+            if (!ReferenceEquals(client, current))
             {
-                return;
+                if (client != null) Main.RestoreLocalSettings();
+                client = current;
+                ResetSyncState();
+                Main.Log("[MP] Client connection changed, synchronization reset.");
             }
 
-            float damageToAdd =
-                Mathf.Clamp01(packet.DamageToAdd);
-
-            if (damageToAdd <= 0f)
+            if (wasClient != isClientNow)
             {
-                return;
+                bool wasBefore = wasClient;
+                wasClient = isClientNow;
+                snapshotReceived = false;
+                nextReadyRequest = 0f;
+                clearedForConnection = false;
+                pendingDamage.Clear();
+
+                if (wasBefore && !isClientNow) Main.RestoreLocalSettings();
+                Main.Log(isClientNow ? "[MP] Entered multiplayer as client." : "[MP] Left multiplayer client state.");
             }
 
-            ApplyDamageAndBroadcast(
-                packet.JunctionKey,
-                damageToAdd);
+            // Als Client: lokalen Einzelspieler-Zustand verwerfen und auf den Host warten
+            if (isClientNow && !clearedForConnection)
+            {
+                DamageStore.ReplaceAll(new Dictionary<string, float>());
+                JunctionRepair.Clear();
+                clearedForConnection = true;
+                Main.Log("[MP] Local junction state cleared, waiting for host snapshot.");
+                JM_Multiplayer.RefreshOpenCareerManager();
+            }
+
+            if (!isClientNow)
+            {
+                snapshotReceived = false;
+                nextReadyRequest = 0f;
+                clearedForConnection = false;
+                pendingDamage.Clear();
+            }
         }
 
-		private void OnRepairReported(
-			ServerBoundJunctionRepairPacket packet,
-			IPlayer sender)
-		{
-			if (packet == null ||
-				sender == null ||
-				string.IsNullOrWhiteSpace(packet.JunctionKey) ||
-				Main.Settings == null)
-			{
-				return;
-			}
-
-			// NEW:
-			// Ausschließlich der Host-Schadensstand ist autoritativ.
-			float currentDamage =
-				DamageStore.Get(
-					packet.JunctionKey);
-
-			if (currentDamage <= 0f)
-			{
-				Main.Log(
-					$"[MP] Client repair rejected: " +
-					$"{packet.JunctionKey} has no damage.",
-					true);
-
-				return;
-			}
-
-			// NEW:
-			// Reparatur darf maximal dem Host-Setting entsprechen.
-			float maximumRepair =
-				Mathf.Clamp01(
-					Main.Settings.repairAmountPercent);
-
-			float repairAmount =
-				Mathf.Clamp(
-					packet.RepairAmount,
-					0f,
-					maximumRepair);
-
-			// NEW:
-			// Niemals mehr reparieren, als tatsächlich beschädigt ist.
-			repairAmount =
-				Mathf.Min(
-					currentDamage,
-					repairAmount);
-
-			if (repairAmount <= 0f)
-			{
-				return;
-			}
-
-			// NEW:
-			// Der Host bestimmt den echten Modus selbst.
-			bool hostIsRewardMode =
-				Main.Settings.repairMode == RepairMode.Reward ||
-				(
-					Main.Settings.repairMode == RepairMode.Dynamic &&
-					MaintenanceLicense.HasLicense
-				);
-
-			// NEW:
-			// Der Host berechnet den Betrag selbst.
-			double hostCalculatedAmount;
-
-			if (hostIsRewardMode)
-			{
-				hostCalculatedAmount =
-					Math.Round(
-						Math.Max(
-							0.0,
-							Main.Settings.maxRepairRewardFull) *
-						repairAmount,
-						2);
-			}
-			else
-			{
-				hostCalculatedAmount =
-					Math.Round(
-						Math.Max(
-							0.0,
-							Main.Settings.maxRepairCostFull) *
-						repairAmount,
-						2);
-			}
-
-			// NEW:
-			// Client-Werte nur protokollieren, niemals autoritativ verwenden.
-			if (packet.IsReward != hostIsRewardMode)
-			{
-				Main.Log(
-					$"[MP] Repair mode mismatch for {packet.JunctionKey}: " +
-					$"client={(packet.IsReward ? "EARN" : "PAY")}, " +
-					$"host={(hostIsRewardMode ? "EARN" : "PAY")}. " +
-					$"Host mode will be used.",
-					true);
-			}
-
-			if (Math.Abs(
-					packet.MoneyAmount -
-					hostCalculatedAmount) > 0.01)
-			{
-				Main.Log(
-					$"[MP] Repair amount mismatch for {packet.JunctionKey}: " +
-					$"client=${packet.MoneyAmount:0.00}, " +
-					$"host=${hostCalculatedAmount:0.00}. " +
-					$"Host amount will be used.",
-					true);
-			}
-
-			// NEW:
-			// Nur wenn die Host-Geldtransaktion erfolgreich war,
-			// wird die Reparatur tatsächlich angewendet.
-			if (!ApplyHostMoneyTransaction(
-					hostCalculatedAmount,
-					hostIsRewardMode))
-			{
-				Main.Log(
-					$"[MP] Client repair rejected because host money " +
-					$"transaction failed: {packet.JunctionKey}.",
-					true);
-
-				return;
-			}
-
-			ApplyRepairAndBroadcast(
-				packet.JunctionKey,
-				repairAmount);
-		}
-		
-		// NEW:
-		// Führt die Geldtransaktion ausschließlich auf der Host-Wallet aus.
-		// true  = Transaktion erfolgreich oder Betrag war 0
-		// false = Inventory fehlt oder PAY-Betrag ist nicht verfügbar
-		private static bool ApplyHostMoneyTransaction(
-			double amount,
-			bool isReward)
-		{
-			amount =
-				Math.Round(
-					Math.Max(
-						0.0,
-						amount),
-					2);
-
-			if (amount <= 0.0)
-			{
-				return true;
-			}
-
-			var inventory =
-				DV.Utils.SingletonBehaviour<
-					DV.InventorySystem.Inventory>.Instance;
-
-			if (inventory == null)
-			{
-				Main.Log(
-					"[MP] Host inventory is unavailable. " +
-					"Money transaction was not applied.",
-					true);
-
-				return false;
-			}
-
-			if (isReward)
-			{
-				// EARN:
-				// Belohnung direkt in die Wallet des Hosts.
-				inventory.AddMoney(
-					amount);
-
-				Main.Log(
-					$"[MP] Host wallet received ${amount:0.00} " +
-					$"for a client junction repair. " +
-					$"New balance=${inventory.PlayerMoney:0.00}",
-					true);
-
-				return true;
-			}
-
-			// PAY:
-			// Erst prüfen, ob die Host-Wallet genügend Geld enthält.
-			if (inventory.PlayerMoney + 0.001 < amount)
-			{
-				Main.Log(
-					$"[MP] Host cannot pay for client junction repair. " +
-					$"Required=${amount:0.00}, " +
-					$"available=${inventory.PlayerMoney:0.00}",
-					true);
-
-				return false;
-			}
-
-			// CHANGE:
-			// Geld korrekt von der Host-Wallet entfernen.
-			bool removed =
-				inventory.RemoveMoney(
-					amount);
-
-			if (!removed)
-			{
-				Main.Log(
-					$"[MP] Host wallet payment failed. " +
-					$"Required=${amount:0.00}, " +
-					$"available=${inventory.PlayerMoney:0.00}",
-					true);
-
-				return false;
-			}
-
-			Main.Log(
-				$"[MP] Host wallet paid ${amount:0.00} " +
-				$"for a client junction repair. " +
-				$"New balance=${inventory.PlayerMoney:0.00}",
-				true);
-
-			return true;
-		}
-
-        private void OnClientReady(
-            ServerBoundJunctionReadyPacket packet,
-            IPlayer sender)
+        private void TryRegister()
         {
-            if (packet == null ||
-                sender == null ||
-                !packet.Ready)
+            client = MultiplayerAPI.Client;
+            if (client == null) return;
+
+            client.RegisterPacket<ClientBoundJunctionStatePacket>(OnState);
+            client.RegisterPacket<ClientBoundJunctionSnapshotPacket>(OnSnapshot);
+            client.RegisterPacket<ClientBoundJunctionSettingsPacket>(OnSettings);
+            client.RegisterPacket<ClientBoundJunctionRepairStartedPacket>(OnRepairStarted);
+            client.RegisterPacket<ClientBoundJunctionRepairRejectedPacket>(OnRepairRejected);
+
+            registered = true;
+            Main.Log("[MP] Client packet handlers registered.");
+        }
+
+        // Erst wenn der Client vollständig geladen ist: Einstellungen + Snapshot anfordern (alle 2 s, bis er da ist)
+        private void TrySendReady()
+        {
+            if (!registered || client == null || !JM_Multiplayer.IsClient || snapshotReceived) return;
+            if (PlayerManager.PlayerTransform == null || !AStartGameData.carsAndJobsLoadingFinished) return;
+            if (Time.unscaledTime < nextReadyRequest) return;
+
+            client.SendPacketToServer(new ServerBoundJunctionReadyPacket { Ready = true }, reliable: true);
+            nextReadyRequest = Time.unscaledTime + 2f;
+            Main.Log("[MP] Snapshot requested.");
+        }
+
+        // ---------- Senden ----------
+
+        public void SendDamageReport(string junctionKey, float damage01)
+        {
+            if (string.IsNullOrWhiteSpace(junctionKey) || damage01 <= 0f) return;
+
+            if (!registered || client == null || !snapshotReceived)
             {
+                float pending;
+                pendingDamage.TryGetValue(junctionKey, out pending);
+                pendingDamage[junctionKey] = Mathf.Clamp01(pending + damage01);
+                Main.Log($"[MP] Damage queued until synchronization: {junctionKey} +{damage01 * 100f:0.###}%");
                 return;
             }
 
-            // NEW:
-            // Erst jetzt ist der Client vollständig geladen.
-            SendSettingsToPlayer(sender);
-            SendSnapshotToPlayer(sender);
-
-            Main.Log(
-                "[MP] Settings and junction snapshot sent " +
-                "to fully loaded client.",
-                true);
+            SendDamageNow(junctionKey, damage01);
         }
 
-        public void ApplyDamageAndBroadcast(
-            string junctionKey,
-            float damageToAdd)
+        private void SendDamageNow(string junctionKey, float damage01)
         {
-            if (string.IsNullOrWhiteSpace(junctionKey))
+            client.SendPacketToServer(new ServerBoundJunctionDamagePacket
             {
+                JunctionKey = junctionKey,
+                DamageToAdd = Mathf.Clamp01(damage01)
+            }, reliable: true);
+
+            Main.Log($"[MP] Damage reported: {junctionKey} +{damage01 * 100f:0.###}%");
+        }
+
+        private void FlushPendingDamage()
+        {
+            if (pendingDamage.Count == 0 || client == null) return;
+
+            var copy = new Dictionary<string, float>(pendingDamage, StringComparer.Ordinal);
+            pendingDamage.Clear();
+            foreach (var kv in copy)
+                if (kv.Value > 0f) SendDamageNow(kv.Key, kv.Value);
+
+            Main.Log($"[MP] Flushed {copy.Count} queued damage report(s).");
+        }
+
+        public void SendRepairReport(string junctionKey, string junctionName, float repair01, RepairQuote q, string carId)
+        {
+            if (!registered || client == null) return;
+
+            client.SendPacketToServer(new ServerBoundJunctionRepairPacket
+            {
+                JunctionKey = junctionKey,
+                JunctionName = junctionName ?? string.Empty,
+                RepairAmount = Mathf.Clamp01(repair01),
+                MoneyAmount = q.IsReward ? q.Payout : q.Pay,
+                IsReward = q.IsReward,
+                CarId = carId ?? string.Empty
+            }, reliable: true);
+
+            Main.Log($"[MP] Repair reported: {junctionKey} {repair01 * 100f:0.###}%, {(q.IsReward ? "EARN" : "PAY")}, car {carId}");
+        }
+
+        // ---------- Empfangen ----------
+
+        private void OnState(ClientBoundJunctionStatePacket p)
+        {
+            if (p == null || string.IsNullOrWhiteSpace(p.JunctionKey)) return;
+            DamageStore.Set(p.JunctionKey, Mathf.Clamp01(p.Damage));
+            JM_Multiplayer.RefreshOpenCareerManager();
+        }
+
+        private void OnSnapshot(ClientBoundJunctionSnapshotPacket p)
+        {
+            if (p == null || p.JunctionKeys == null || p.DamageValues == null) return;
+            if (p.JunctionKeys.Length != p.DamageValues.Length)
+            {
+                Main.Error("[MP] Invalid junction snapshot received.");
                 return;
             }
 
-            float before =
-                DamageStore.Get(junctionKey);
-
-            float after =
-                Mathf.Clamp01(
-                    before + Mathf.Max(0f, damageToAdd));
-
-            DamageStore.Set(
-                junctionKey,
-                after);
-
-            BroadcastState(
-                junctionKey,
-                after);
-
-            Main.Log(
-                $"[MP] Damage applied: {junctionKey} " +
-                $"{before * 100f:0.###}% -> " +
-                $"{after * 100f:0.###}%",
-                false);
-        }
-
-        public void ApplyRepairAndBroadcast(
-            string junctionKey,
-            float repairAmount)
-        {
-            if (string.IsNullOrWhiteSpace(junctionKey))
+            var map = new Dictionary<string, float>(p.JunctionKeys.Length);
+            for (int i = 0; i < p.JunctionKeys.Length; i++)
             {
-                return;
+                if (string.IsNullOrWhiteSpace(p.JunctionKeys[i])) continue;
+                map[p.JunctionKeys[i]] = Mathf.Clamp01(p.DamageValues[i]);
+            }
+            DamageStore.ReplaceAll(map);
+
+            // Laufende Reparaturen übernehmen (Sperre, Fortschritt, Zughalt)
+            JunctionRepair.Clear();
+            int n = p.RepairKeys != null ? p.RepairKeys.Length : 0;
+            for (int i = 0; i < n; i++)
+            {
+                string key = p.RepairKeys[i];
+                if (string.IsNullOrWhiteSpace(key)) continue;
+                string name = p.RepairNames != null && i < p.RepairNames.Length ? p.RepairNames[i] : key;
+                string car = p.RepairCarIds != null && i < p.RepairCarIds.Length ? p.RepairCarIds[i] : null;
+                float rest = p.RepairRemaining != null && i < p.RepairRemaining.Length ? p.RepairRemaining[i] : 0f;
+                if (rest > 0.1f) JunctionRepair.Start(key, name, rest, string.IsNullOrEmpty(car) ? null : car);
             }
 
-            float before =
-                DamageStore.Get(junctionKey);
+            snapshotReceived = true;
+            Main.Log($"[MP] Junction snapshot applied: {map.Count} damaged, {n} repair(s) running.");
 
-            float repaired =
-                Mathf.Min(
-                    before,
-                    Mathf.Clamp01(repairAmount));
-
-            float after =
-                Mathf.Max(
-                    0f,
-                    before - repaired);
-
-            DamageStore.Set(
-                junctionKey,
-                after);
-
-            BroadcastState(
-                junctionKey,
-                after);
-
-            Main.Log(
-                $"[MP] Repair applied: {junctionKey} " +
-                $"{before * 100f:0.###}% -> " +
-                $"{after * 100f:0.###}%",
-                false);
+            FlushPendingDamage();
+            JM_Multiplayer.RefreshOpenCareerManager();
         }
 
-        private void BroadcastState(
-            string junctionKey,
-            float damage)
+        private void OnSettings(ClientBoundJunctionSettingsPacket p)
         {
-            if (!_initialized ||
-                _server == null)
-            {
-                return;
-            }
+            if (p == null) return;
+            Settings host = Settings.FromXml(p.SettingsXml);
+            if (host == null) return;
 
-            var packet =
-                new ClientBoundJunctionStatePacket
-                {
-                    JunctionKey = junctionKey,
-                    Damage = Mathf.Clamp01(damage)
-                };
-
-            // Host hat den Zustand bereits lokal gesetzt.
-            _server.SendPacketToAll(
-                packet,
-                reliable: true,
-                excludeSelf: true);
+            Main.UseHostSettings(host);
+            JM_Multiplayer.RefreshOpenCareerManager();
         }
 
-        public void SendSettingsToAll()
+        private void OnRepairStarted(ClientBoundJunctionRepairStartedPacket p)
         {
-            if (!_initialized ||
-                _server == null ||
-                Main.Settings == null)
-            {
-                return;
-            }
+            if (p == null || string.IsNullOrWhiteSpace(p.JunctionKey)) return;
 
-            _server.SendPacketToAll(
-                CreateSettingsPacket(),
-                reliable: true,
-                excludeSelf: true);
+            // Eigene Reparatur läuft schon (lokal gestartet)
+            if (JunctionRepair.IsRunning(p.JunctionKey)) return;
+
+            JunctionRepair.Start(p.JunctionKey, p.JunctionName, p.Duration,
+                string.IsNullOrEmpty(p.CarId) ? null : p.CarId);
+            JM_Multiplayer.RefreshOpenCareerManager();
         }
 
-        private void SendSettingsToPlayer(
-            IPlayer player)
+        // Host hat die eigene Reparatur abgelehnt: Sperre aufheben, Schaden zurück
+        private void OnRepairRejected(ClientBoundJunctionRepairRejectedPacket p)
         {
-            if (_server == null ||
-                player == null)
-            {
-                return;
-            }
+            if (p == null || string.IsNullOrWhiteSpace(p.JunctionKey)) return;
 
-            _server.SendPacketToPlayer(
-                CreateSettingsPacket(),
-                player,
-                reliable: true);
-        }
-
-        private static ClientBoundJunctionSettingsPacket
-            CreateSettingsPacket()
-        {
-            return new ClientBoundJunctionSettingsPacket
-            {
-                EnableRandomFlip =
-                    Main.Settings.enableRandomFlip,
-
-                SafeNoFlipSpeedKmh =
-                    Main.Settings.safeNoFlipSpeedKmh,
-
-                FlipMultiplierPercent =
-                    Main.Settings.flipMultiplierPercent,
-
-                FlipCooldownAfterForcedSec =
-                    Main.Settings.flipCooldownAfterForcedSec,
-
-                RepairRadius =
-                    Main.Settings.repairRadius,
-
-                RepairAmountPercent =
-                    Main.Settings.repairAmountPercent,
-
-                RepairVehicleSearchRadius =
-                    Main.Settings.repairVehicleSearchRadius,
-
-                MaxVehicleStandingSpeedKmh =
-                    Main.Settings.maxVehicleStandingSpeedKmh,
-
-                MaxRepairCostFull =
-                    Main.Settings.maxRepairCostFull,
-
-                MaxRepairRewardFull =
-                    Main.Settings.maxRepairRewardFull,
-
-                MaintenanceLicensePrice =
-                    Main.Settings.maintenanceLicensePrice,
-
-                BlockManualSwitchAtFullDamage =
-                    Main.Settings.BlockManualSwitchAtFullDamage,
-
-                RepairMode =
-                    (int)Main.Settings.repairMode
-            };
-        }
-
-        private void SendSnapshotToPlayer(
-            IPlayer player)
-        {
-            if (_server == null ||
-                player == null)
-            {
-                return;
-            }
-
-            Dictionary<string, float> map =
-                DamageStore.All();
-
-            string[] keys =
-                new string[map.Count];
-
-            float[] values =
-                new float[map.Count];
-
-            int index = 0;
-
-            foreach (KeyValuePair<string, float> entry in map)
-            {
-                keys[index] =
-                    entry.Key;
-
-                values[index] =
-                    Mathf.Clamp01(entry.Value);
-
-                index++;
-            }
-
-            var packet =
-                new ClientBoundJunctionSnapshotPacket
-                {
-                    JunctionKeys = keys,
-                    DamageValues = values
-                };
-
-            _server.SendPacketToPlayer(
-                packet,
-                player,
-                reliable: true);
+            JunctionRepair.Cancel(p.JunctionKey);
+            DamageStore.Set(p.JunctionKey, Mathf.Clamp01(p.Damage));
+            JM_ListState.Status = Loc.T("mp.rejected");
+            Main.Log($"[MP] Repair of {p.JunctionKey} rejected by host.");
+            JM_Multiplayer.RefreshOpenCareerManager();
         }
 
         private void OnDestroy()
         {
-            if (Instance == this)
+            Main.RestoreLocalSettings();
+            if (Instance == this) Instance = null;
+            client = null;
+            wasClient = false;
+            ResetSyncState();
+        }
+    }
+
+    // ============================================================
+    // SERVER (HOST)
+    // ============================================================
+
+    internal class JunctionMaintenanceMPServer : MonoBehaviour
+    {
+        public static JunctionMaintenanceMPServer Instance { get; private set; }
+
+        private IServer server;
+        private bool initialized;
+
+        private void Awake()
+        {
+            if (Instance == null) Instance = this;
+            else if (Instance != this)
             {
-                Instance = null;
+                Destroy(this);
+                return;
+            }
+            TryInitialize();
+        }
+
+        private void Update()
+        {
+            // Server kann neu entstehen (neue Sitzung)
+            if (initialized && !ReferenceEquals(server, MultiplayerAPI.Server))
+            {
+                initialized = false;
+                server = null;
+            }
+            if (!initialized) TryInitialize();
+        }
+
+        private void TryInitialize()
+        {
+            try
+            {
+                server = MultiplayerAPI.Server;
+                if (server == null) return;
+
+                server.RegisterPacket<ServerBoundJunctionDamagePacket>(OnDamageReported);
+                server.RegisterPacket<ServerBoundJunctionRepairPacket>(OnRepairReported);
+                server.RegisterPacket<ServerBoundJunctionReadyPacket>(OnClientReady);
+
+                initialized = true;
+                Main.Log("[MP] Server packet handlers registered.");
+            }
+            catch (Exception e)
+            {
+                server = null;
+                Main.Error("[MP] Server registration failed: " + e);
+            }
+        }
+
+        // ---------- Empfangen ----------
+
+        private void OnDamageReported(ServerBoundJunctionDamagePacket p, IPlayer sender)
+        {
+            if (p == null || sender == null || string.IsNullOrWhiteSpace(p.JunctionKey)) return;
+            float dmg = Mathf.Clamp01(p.DamageToAdd);
+            if (dmg > 0f) ApplyDamageAndBroadcast(p.JunctionKey, dmg);
+        }
+
+        private void OnRepairReported(ServerBoundJunctionRepairPacket p, IPlayer sender)
+        {
+            if (p == null || sender == null || string.IsNullOrWhiteSpace(p.JunctionKey) || Main.Settings == null) return;
+
+            string key = p.JunctionKey;
+            float current = DamageStore.Get(key);
+
+            // Prüfen: Schaden vorhanden, Weiche nicht schon in Reparatur
+            if (current <= 0f)
+            {
+                Reject(sender, key, "no damage");
+                return;
+            }
+            if (JunctionRepair.IsRunning(key))
+            {
+                Reject(sender, key, "repair already running");
+                return;
             }
 
-            _server = null;
-            _initialized = false;
+            // Fahrzeug des Clients arbeitet gerade für eine andere Wartungs-Mod (z. B. Gleisreparatur)
+            TrainCar requester = JunctionRepair.FindCar(p.CarId);
+            if (requester != null && MaintenanceBusy.BusyByOther(requester))
+            {
+                Reject(sender, key, "vehicle busy with another maintenance mod");
+                return;
+            }
+
+            // Nie mehr als laut Host-Einstellung und tatsächlichem Schaden
+            float r = Mathf.Min(current, Mathf.Clamp(p.RepairAmount, 0f, Main.Settings.RepairStep01));
+            if (r <= 0f)
+            {
+                Reject(sender, key, "nothing to repair");
+                return;
+            }
+
+            // Preis/Vergütung rechnet der Host selbst (Modus, Lizenzen und Versicherung des Hosts)
+            RepairQuote q = RepairEconomy.Quote(r);
+            double hostAmount = q.IsReward ? q.Payout : q.Pay;
+
+            if (q.IsReward != p.IsReward || Math.Abs(hostAmount - p.MoneyAmount) > 0.01)
+                Main.Log($"[MP] Repair {key}: client {(p.IsReward ? "EARN" : "PAY")} ${p.MoneyAmount:0.00}, " +
+                         $"host {(q.IsReward ? "EARN" : "PAY")} ${hostAmount:0.00} – host values are used");
+
+            if (!ApplyHostMoney(q))
+            {
+                Reject(sender, key, "host money transaction failed");
+                return;
+            }
+
+            float after = current - r;
+            float duration = JunctionRepair.DurationFor(r);
+            string carId = string.IsNullOrEmpty(p.CarId) ? null : p.CarId;
+            string name = string.IsNullOrEmpty(p.JunctionName) ? key : p.JunctionName;
+
+            DamageStore.Set(key, after);
+            JunctionRepair.Start(key, name, duration, carId);   // Host hält den Zug des Clients fest
+
+            BroadcastState(key, after);
+            BroadcastRepairStarted(key, name, duration, carId);
+            JM_Multiplayer.RefreshOpenCareerManager();
+
+            Main.Log($"[MP] Client repair applied: {key} {current * 100f:0.###}% -> {after * 100f:0.###}%");
+        }
+
+        private void Reject(IPlayer sender, string key, string reason)
+        {
+            Main.Log($"[MP] Client repair rejected: {key} ({reason})");
+            if (server == null || sender == null) return;
+
+            server.SendPacketToPlayer(new ClientBoundJunctionRepairRejectedPacket
+            {
+                JunctionKey = key,
+                Damage = DamageStore.Get(key)
+            }, sender, reliable: true);
+        }
+
+        // Geld ausschließlich auf der Wallet des Hosts
+        private static bool ApplyHostMoney(RepairQuote q)
+        {
+            if (q.IsReward)
+            {
+                double payout = Math.Round(Math.Max(0.0, q.Payout), 2);
+                if (payout <= 0.0) return true;
+
+                var inv = DV.Utils.SingletonBehaviour<DV.InventorySystem.Inventory>.Instance;
+                if (inv == null)
+                {
+                    Main.Error("[MP] Host inventory unavailable, payout not applied");
+                    return false;
+                }
+                inv.AddMoney(payout);
+                Main.Log($"[MP] Host wallet received ${payout:0.00} for a client junction repair");
+                return true;
+            }
+
+            double pay = Math.Round(Math.Max(0.0, q.Pay), 2);
+            if (pay > 0.0)
+            {
+                var inv = DV.Utils.SingletonBehaviour<DV.InventorySystem.Inventory>.Instance;
+                if (inv == null)
+                {
+                    Main.Error("[MP] Host inventory unavailable, payment not applied");
+                    return false;
+                }
+                if (inv.PlayerMoney + 0.001 < pay)
+                {
+                    Main.Log($"[MP] Host cannot pay ${pay:0.00} (available ${inv.PlayerMoney:0.00})");
+                    return false;
+                }
+                if (!inv.RemoveMoney(pay))
+                {
+                    Main.Log($"[MP] Host wallet payment of ${pay:0.00} failed");
+                    return false;
+                }
+                Main.Log($"[MP] Host wallet paid ${pay:0.00} for a client junction repair");
+            }
+
+            // Versicherung des Hosts wie im Einzelspieler
+            RepairEconomy.AfterPaidRepair(q);
+            return true;
+        }
+
+        private void OnClientReady(ServerBoundJunctionReadyPacket p, IPlayer sender)
+        {
+            if (p == null || sender == null || !p.Ready) return;
+            SendSettingsToPlayer(sender);
+            SendSnapshotToPlayer(sender);
+            Main.Log("[MP] Settings and junction snapshot sent to client.");
+        }
+
+        // ---------- Senden ----------
+
+        public void ApplyDamageAndBroadcast(string junctionKey, float damage01)
+        {
+            if (string.IsNullOrWhiteSpace(junctionKey)) return;
+
+            float before = DamageStore.Get(junctionKey);
+            float after = Mathf.Clamp01(before + Mathf.Max(0f, damage01));
+            DamageStore.Set(junctionKey, after);
+            BroadcastState(junctionKey, after);
+            JM_Multiplayer.RefreshOpenCareerManager();
+
+            Main.Log($"[MP] Damage applied: {junctionKey} {before * 100f:0.###}% -> {after * 100f:0.###}%");
+        }
+
+        public void BroadcastState(string junctionKey, float damage01)
+        {
+            if (!initialized || server == null) return;
+            server.SendPacketToAll(new ClientBoundJunctionStatePacket
+            {
+                JunctionKey = junctionKey,
+                Damage = Mathf.Clamp01(damage01)
+            }, reliable: true, excludeSelf: true);
+        }
+
+        public void BroadcastRepairStarted(string junctionKey, string junctionName, float duration, string carId)
+        {
+            if (!initialized || server == null) return;
+            server.SendPacketToAll(new ClientBoundJunctionRepairStartedPacket
+            {
+                JunctionKey = junctionKey,
+                JunctionName = junctionName ?? junctionKey,
+                Duration = duration,
+                CarId = carId ?? string.Empty
+            }, reliable: true, excludeSelf: true);
+        }
+
+        public void SendSettingsToAll()
+        {
+            if (!initialized || server == null || Main.Settings == null) return;
+            server.SendPacketToAll(CreateSettingsPacket(), reliable: true, excludeSelf: true);
+        }
+
+        private void SendSettingsToPlayer(IPlayer player)
+        {
+            if (server == null || player == null || Main.Settings == null) return;
+            server.SendPacketToPlayer(CreateSettingsPacket(), player, reliable: true);
+        }
+
+        private static ClientBoundJunctionSettingsPacket CreateSettingsPacket()
+        {
+            return new ClientBoundJunctionSettingsPacket { SettingsXml = Main.Settings.ToXml() };
+        }
+
+        private void SendSnapshotToPlayer(IPlayer player)
+        {
+            if (server == null || player == null) return;
+
+            var map = DamageStore.All();
+            var keys = new string[map.Count];
+            var values = new float[map.Count];
+            int i = 0;
+            foreach (var kv in map)
+            {
+                keys[i] = kv.Key;
+                values[i] = Mathf.Clamp01(kv.Value);
+                i++;
+            }
+
+            var rKeys = new List<string>();
+            var rNames = new List<string>();
+            var rCars = new List<string>();
+            var rRest = new List<float>();
+            foreach (var job in JunctionRepair.Jobs)
+            {
+                rKeys.Add(job.Key);
+                rNames.Add(job.Name ?? job.Key);
+                rCars.Add(job.CarId ?? string.Empty);
+                rRest.Add(job.Remaining);
+            }
+
+            server.SendPacketToPlayer(new ClientBoundJunctionSnapshotPacket
+            {
+                JunctionKeys = keys,
+                DamageValues = values,
+                RepairKeys = rKeys.ToArray(),
+                RepairNames = rNames.ToArray(),
+                RepairCarIds = rCars.ToArray(),
+                RepairRemaining = rRest.ToArray()
+            }, player, reliable: true);
+        }
+
+        private void OnDestroy()
+        {
+            if (Instance == this) Instance = null;
+            server = null;
+            initialized = false;
         }
     }
 }

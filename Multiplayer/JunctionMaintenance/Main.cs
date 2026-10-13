@@ -1,512 +1,205 @@
 // File: Main.cs
 // Namespace: JunctionMaintenance
-// Contains: Main (loader, GUI, update), repair helpers
+// Contains: Main (Laden, Update, Logging)
+//
+// Aufbau wie TrackMaintenance:
+//   Main.cs            Laden, OnUpdate, Logging
+//   Settings.cs        Einstellungen (inkl. Einstellungsseite), Schadensspeicher, Spielstand
+//   Localization.cs    Mehrsprachigkeit (en + de), Translations.cs (19 weitere Sprachen)
+//   RepairEconomy.cs   Reparaturmodi, Versicherung, zwei Lizenzen (DVCustomLicenses)
+//   Damage.cs          Schadensauslöser: Entgleisung, Mitschleifen, Explosion
+//   Patches.cs         Spielstand, Auffahren der Weiche, zufälliges Umstellen, Sperre bei 100 %
+//   CareerManager.cs   Menü, Liste, Reparatursperre mit Fortschrittsanzeige, Zughalt, Kasse
+//   MaintenanceBusy.cs Fahrzeug beschäftigt – modübergreifend mit Track Maintenance (ohne Abhängigkeit)
 
 using System;
 using System.IO;
-using System.Linq;
-using UnityEngine;
-using UnityModManagerNet;
 using HarmonyLib;
-using DV;
+using UnityModManagerNet;
 
 namespace JunctionMaintenance
 {
-    public class Main
+    public static class Main
     {
-        public static UnityModManager.ModEntry Mod;
-        public static Settings LocalSettings;
-        public static Settings Settings;
-        public static bool Enabled;
-        private static Harmony _harmony;
-		public static bool HasCustomLicensesMod;
-		
-		
-        internal static void UseTemporaryHostSettings(Settings hostSettings)
+        public static UnityModManager.ModEntry ModEntry;
+        public static Settings Settings;        // wirksame Einstellungen (Client: die des Hosts)
+        public static Settings LocalSettings;   // eigene, gespeicherte Einstellungen
+        public static bool Enabled = true;
+
+        private static Harmony harmony;
+
+        static bool Load(UnityModManager.ModEntry entry)
         {
-            if (hostSettings == null)
-                return;
+            ModEntry = entry;
 
-            if (Settings != null)
+            SelfHealSettingsFile(entry);
+
+            try
             {
-                foreach (
-                    System.Collections.Generic.KeyValuePair<
-                        string,
-                        float> entry
-                    in Settings.DamageMap)
-                {
-                    if (string.IsNullOrWhiteSpace(entry.Key))
-                        continue;
-
-                    float value =
-                        Mathf.Clamp01(entry.Value);
-
-                    if (value <= 0.0001f)
-                        continue;
-
-                    hostSettings.DamageMap[entry.Key] =
-                        value;
-                }
+                LocalSettings = UnityModManager.ModSettings.Load<Settings>(entry);
             }
+            catch (Exception e)
+            {
+                entry.Logger.Error("Settings could not be loaded, using defaults: " + e);
+                LocalSettings = null;
+            }
+            if (LocalSettings == null)
+            {
+                LocalSettings = new Settings();
+                try { LocalSettings.Save(entry); }
+                catch (Exception e) { entry.Logger.Error("Saving default settings failed: " + e); }
+            }
+            Settings = LocalSettings;
 
-            Settings = hostSettings;
+            // Sprachen laden (eingebaut + <Mod>/lang/*.txt)
+            Loc.Init(entry.Path);
 
-            Log(
-                "[MP] Temporary host settings activated. " +
-                "Local settings remain unchanged.",
-                true);
+            entry.OnToggle = OnToggle;
+            // Immer die eigenen Einstellungen zeichnen/speichern (Client sieht nur einen Hinweis)
+            entry.OnGUI = e => LocalSettings.Draw(e);
+            entry.OnSaveGUI = OnSaveGUI;
+            entry.OnUpdate = OnUpdate;
+
+            harmony = new Harmony(entry.Info.Id);
+            harmony.PatchAll(typeof(Main).Assembly);
+
+            JM_Multiplayer.Initialize();
+
+            entry.Logger.Log("JunctionMaintenance loaded");
+            return true;
+        }
+
+        private static void OnSaveGUI(UnityModManager.ModEntry entry)
+        {
+            if (JM_Multiplayer.IsClient) return;   // Client: Einstellungen kommen vom Host
+            LocalSettings.Save(entry);
+            JM_Multiplayer.BroadcastHostSettings();
+        }
+
+        // Client: Einstellungen des Hosts für die Dauer der Sitzung verwenden (nichts wird gespeichert)
+        internal static void UseHostSettings(Settings host)
+        {
+            if (host == null) return;
+            host.logging = LocalSettings != null && LocalSettings.logging; // Logging bleibt lokal
+            Settings = host;
+            JunctionLicenses.ApplyValues();
+            Log("[MP] Host settings active (local settings unchanged)");
         }
 
         internal static void RestoreLocalSettings()
         {
-            if (LocalSettings == null)
-                return;
-
-            Settings = LocalSettings.CloneConfiguration();
-
-            Log(
-                "[MP] Local JunctionMaintenance settings restored.",
-                true);
+            if (LocalSettings == null || ReferenceEquals(Settings, LocalSettings)) return;
+            Settings = LocalSettings;
+            JunctionLicenses.ApplyValues();
+            Log("[MP] Local settings restored");
         }
 
-        private static void SaveLocalSettings(UnityModManager.ModEntry modEntry)
+        private static bool OnToggle(UnityModManager.ModEntry entry, bool value)
         {
-            if (LocalSettings == null ||
-                Settings == null)
+            Enabled = value;
+            if (!value)
             {
-                return;
+                // Nichts darf hängen bleiben (Zughalt, offene Liste)
+                RepairHold.Release();
+                DerailTracker.Clear();
+                JM_BusyPublisher.Clear();
             }
-
-            LocalSettings.CopyConfigurationFrom(Settings);
-            LocalSettings.Save(modEntry);
-        }
-
-
-        static bool Load(UnityModManager.ModEntry modEntry)
-        {
-            Mod = modEntry;
-            SelfHealSettingsFile(modEntry);			
-			HasCustomLicensesMod = UnityModManager.modEntries.Any(m => m.Info.Id.Equals("DVCustomLicenses", StringComparison.OrdinalIgnoreCase));
-
-			Log("[JunctionMaintenance] DVCustomLicenses installed: " + HasCustomLicensesMod, true);
-
-			try
-            {
-                LocalSettings =
-                    UnityModManager.ModSettings
-                        .Load<Settings>(
-                            modEntry);
-            }
-            catch (Exception ex)
-            {
-                Log(
-                    "Settings.Load failed, creating defaults. " +
-                    ex,
-                    force: true);
-
-                LocalSettings = new Settings();
-
-                try
-                {
-                    LocalSettings.Save(modEntry);
-                }
-                catch (Exception ex2)
-                {
-                    Log(
-                        "Settings.Save failed: " +
-                        ex2,
-                        force: true);
-                }
-            }
-
-            if (LocalSettings == null)
-            {
-                LocalSettings = new Settings();
-            }
-			
-			if (HasCustomLicensesMod)
-            {
-                if (LocalSettings.repairMode != RepairMode.Dynamic)
-                {
-                    LocalSettings.repairMode = RepairMode.Dynamic;
-
-                    Log(
-                        "[JunctionMaintenance] " +
-                        "Forcing Dynamic mode " +
-                        "(DVCustomLicenses detected)",
-                        true);
-                }
-            }
-            else
-            {
-                if (LocalSettings.repairMode == RepairMode.Dynamic)
-                {
-                    LocalSettings.repairMode =
-                        RepairMode.Penalty;
-
-                    Log(
-                        "[JunctionMaintenance] " +
-                        "Dynamic mode disabled " +
-                        "(DVCustomLicenses missing) -> " +
-                        "fallback to Penalty",
-                        true);
-                }
-            }
-
-            Settings = LocalSettings.CloneConfiguration();
-
-            modEntry.OnToggle  = OnToggle;
-            modEntry.OnGUI     = OnGUI;
-            modEntry.OnSaveGUI = OnSaveGUI;
-
-            _harmony = new Harmony(modEntry.Info.Id);
-            _harmony.PatchAll(typeof(Main).Assembly);			
-			
-			JM_Multiplayer.Initialize();
-
-            Log("Loaded JunctionMaintenance.", force: true);
             return true;
         }
 
-        private static void SelfHealSettingsFile(UnityModManager.ModEntry modEntry)
+        // Normale Meldungen und Warnungen nur mit "Print debug logs".
+        // Fehler werden immer ausgegeben, sonst sind Fehlerberichte unmöglich.
+        public static void Log(string message)
+        {
+            if (Settings != null && Settings.logging) ModEntry?.Logger.Log(message);
+        }
+
+        public static void Warn(string message)
+        {
+            if (Settings != null && Settings.logging) ModEntry?.Logger.Warning(message);
+        }
+
+        public static void Error(string message)
+        {
+            ModEntry?.Logger.Error(message);
+        }
+
+        // Wird von UMM jeden Frame aufgerufen
+        private static void OnUpdate(UnityModManager.ModEntry entry, float dt)
+        {
+            if (!Enabled) return;
+
+            try
+            {
+                // Laufende Reparatur weiterzählen (Sperre)
+                JunctionRepair.Tick();
+
+                // Reparatur nur im Stand: bei Bewegung Liste/Kasse zwangsweise verlassen
+                JM_ListState.Tick();
+
+                // Zug festhalten, solange eine Reparatur läuft
+                RepairHold.Tick();
+
+                // Fahrzeuge mit laufender Reparatur für andere Wartungs-Mods kennzeichnen
+                JM_BusyPublisher.Tick();
+
+                // CareerManagerAPI: angeforderten Bildschirm öffnen
+                CmApiCompat.Tick();
+            }
+            catch (Exception e)
+            {
+                Error("Repair update failed: " + e);
+            }
+
+            try
+            {
+                // Preis und Copay der Lizenzen aus den Einstellungen übernehmen
+                JunctionLicenses.Tick();
+            }
+            catch (Exception e)
+            {
+                Error("License update failed: " + e);
+            }
+
+            if (!Settings.DamageWhenDragged) return;
+
+            try
+            {
+                DerailTracker.Tick(dt);
+            }
+            catch (Exception e)
+            {
+                Error("Derail tracker failed: " + e);
+            }
+        }
+
+        // Kaputte Settings.xml (leer/abgeschnitten) beiseitelegen, damit Standardwerte entstehen
+        private static void SelfHealSettingsFile(UnityModManager.ModEntry entry)
         {
             try
             {
-                string path = Path.Combine(modEntry.Path, "Settings.xml");
+                string path = Path.Combine(entry.Path, "Settings.xml");
                 if (!File.Exists(path)) return;
 
-                var fi = new FileInfo(path);
-                bool bad = fi.Length < 8;
+                bool bad = new FileInfo(path).Length < 8;
                 if (!bad)
                 {
                     string all = File.ReadAllText(path).TrimStart();
                     if (!all.StartsWith("<") || (!all.Contains("<Settings") && !all.Contains("<JunctionMaintenance.Settings")))
                         bad = true;
                 }
+
                 if (bad)
                 {
                     string bak = path + ".corrupt-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".xml";
                     File.Move(path, bak);
-                    Log("Detected invalid Settings.xml. Moved to: " + bak + " and will regenerate defaults.", force: true);
+                    entry.Logger.Warning("Invalid Settings.xml moved to: " + bak + " (defaults will be created)");
                 }
             }
-            catch (Exception ex)
+            catch (Exception e)
             {
-                Log("SelfHealSettingsFile exception: " + ex, force: true);
+                entry.Logger.Error("SelfHealSettingsFile failed: " + e);
             }
-        }
-
-        private static bool OnToggle(UnityModManager.ModEntry modEntry, bool value)
-        {
-            Enabled = value;
-            Log("Toggled: " + (Enabled ? "ON" : "OFF"), force: true);
-            return true;
-        }
-
-        private static void OnGUI(UnityModManager.ModEntry modEntry)
-		{
-			if (JM_Multiplayer.IsClient)
-			{
-				GUIStyle clientInfoStyle =
-					new GUIStyle(GUI.skin.box);
-
-				clientInfoStyle.alignment =
-					TextAnchor.MiddleLeft;
-
-				clientInfoStyle.wordWrap =
-					true;
-
-				clientInfoStyle.fontStyle =
-					FontStyle.Bold;
-
-				GUILayout.Box(
-					"MULTIPLAYER CLIENT\n" +
-					"Junction Maintenance settings are controlled by the host.",
-					clientInfoStyle,
-					GUILayout.ExpandWidth(true));
-
-				GUILayout.Space(8);
-
-				return;
-			}
-
-			bool hasMod =
-				Main.HasCustomLicensesMod;
-
-			// =============================
-			// GAME MODE (TOP)
-			// =============================
-			GUILayout.Label("Game Mode:", UnityModManager.UI.bold);
-            GUILayout.Space(2);
-			GUIStyle box = new GUIStyle(GUI.skin.box);
-			box.alignment = TextAnchor.UpperLeft;
-			box.wordWrap = true;
-			GUILayout.Space(5);			
-			GUILayout.BeginHorizontal();
-			GUIStyle active   = new GUIStyle(GUI.skin.button);
-			GUIStyle inactive = new GUIStyle(GUI.skin.button);
-			
-			if (hasMod)
-			{
-				GUI.enabled = false;
-
-				GUILayout.Button(
-					"PAY",
-					GUILayout.Width(150));
-
-				GUILayout.Button(
-					"EARN",
-					GUILayout.Width(150));
-
-				// CHANGE:
-				// Host wieder aktivieren, Client deaktiviert lassen.
-				GUI.enabled = true;
-
-				if (GUILayout.Button(
-						"LICENSE",
-						Settings.repairMode == RepairMode.Dynamic
-							? active
-							: inactive,
-						GUILayout.Width(150)))
-				{
-					Settings.repairMode = RepairMode.Dynamic;
-				}
-			}
-			else
-			{
-				GUILayout.BeginHorizontal();
-
-				active.normal.textColor = Color.green;
-
-				// PAY
-				if (GUILayout.Button("PAY",
-					Settings.repairMode == RepairMode.Penalty ? active : inactive,
-					GUILayout.Width(150)))
-				{
-					Settings.repairMode = RepairMode.Penalty;
-				}
-
-				// EARN
-				if (GUILayout.Button("EARN",
-					Settings.repairMode == RepairMode.Reward ? active : inactive,
-					GUILayout.Width(150)))
-				{
-					Settings.repairMode = RepairMode.Reward;
-				}
-
-				// LICENSE
-				if (hasMod)
-				{
-					if (GUILayout.Button("LICENSE",Settings.repairMode == RepairMode.Dynamic ? active : inactive,GUILayout.Width(150)))
-					{
-						Settings.repairMode = RepairMode.Dynamic;
-					}
-				}
-				else
-				{
-					bool previousGuiState =	GUI.enabled;					
-					GUI.enabled = false;
-					GUILayout.Button("LICENSE", GUILayout.Width(150));
-					GUI.enabled = previousGuiState;
-				}
-
-				GUILayout.EndHorizontal();
-			}
-			GUILayout.EndHorizontal();
-			if (!hasMod)
-			{
-				GUIStyle style = new GUIStyle(GUI.skin.label);
-				style.normal.textColor = Color.gray;
-				style.fontStyle = FontStyle.Italic;
-
-				GUILayout.Label("License mode requires the DVCustomLicenses mod.", style);
-			}
-			GUILayout.Space(5);
-			// =============================
-			// INFO BOX
-			// =============================
-			string info = "";
-			if (Settings.repairMode == RepairMode.Penalty)
-			{
-				info = "Since you most likely caused the damage to the junction, you are responsible for paying the repair costs.";
-			}
-			else if (Settings.repairMode == RepairMode.Reward)
-			{
-				info = "Regardless of who caused the damage, repairing a junction grants you a small compensation for your effort.";
-			}
-			else
-			{
-				info = "Railway switches are expensive.\n" +
-					   "To avoid paying full repair costs for every incident, you can acquire the maintenance license\n" +
-					   "and get partially compensated as an authorized technician.";
-			}			
-            GUILayout.Space(2);	
-			GUILayout.Box(info, box, GUILayout.ExpandWidth(true));
-			GUILayout.Space(5);
-
-			// =============================
-			// ECONOMY SETTINGS
-			// =============================
-			GUILayout.Label("Economy", UnityModManager.UI.bold);
-            GUILayout.Space(2);
-			GUILayout.BeginVertical(GUI.skin.box);
-            GUILayout.Space(2);
-
-			// PAY
-			if (Settings.repairMode == RepairMode.Penalty)
-			{
-				Settings.maxRepairCostFull = FloatFieldL("Max Repair Cost:", Settings.maxRepairCostFull);
-			}
-
-			// EARN
-			if (Settings.repairMode == RepairMode.Reward)
-			{
-				Settings.maxRepairRewardFull = FloatFieldL("Max Repair Payout:", Settings.maxRepairRewardFull);
-			}
-
-			// LICENSE (Dynamic)
-			if (Settings.repairMode == RepairMode.Dynamic)
-			{
-				Settings.maxRepairCostFull   = FloatFieldL("Max Repair Cost:", Settings.maxRepairCostFull);
-				Settings.maxRepairRewardFull = FloatFieldL("Max Repair Payout:", Settings.maxRepairRewardFull);
-
-				GUILayout.Space(3);
-				Settings.maintenanceLicensePrice = FloatFieldL("Maintenance License Price:", Settings.maintenanceLicensePrice);
-			}
-            GUILayout.Space(2);
-			GUILayout.EndVertical();	
-			GUILayout.Space(5);
-
-			// =============================
-			// DAMAGE BEHAVIOR
-			// =============================
-			GUILayout.Label("Damage Behavior", UnityModManager.UI.bold);
-            GUILayout.Space(2);
-			GUILayout.BeginVertical(GUI.skin.box);
-            GUILayout.Space(2);
-
-			Settings.BlockManualSwitchAtFullDamage =
-				GUILayout.Toggle(Settings.BlockManualSwitchAtFullDamage,
-				"Disable switches at 100% damage");
-
-            GUILayout.Space(2);
-			GUILayout.EndVertical();	
-			GUILayout.Space(5);
-			// =============================
-			// RANDOM FLIP
-			// =============================
-			GUILayout.Label("Random Flip", UnityModManager.UI.bold);
-            GUILayout.Space(2);
-			GUILayout.BeginVertical(GUI.skin.box);
-            GUILayout.Space(2);
-
-			Settings.enableRandomFlip = GUILayout.Toggle(Settings.enableRandomFlip, "Enable random flip");
-
-			if (Settings.enableRandomFlip)
-			{
-				GUILayout.Space(5);
-
-				GUILayout.BeginHorizontal();
-				GUILayout.Label($"Safe Speed: {Settings.safeNoFlipSpeedKmh:0} km/h", GUILayout.Width(250));
-				Settings.safeNoFlipSpeedKmh = Mathf.Round(
-					GUILayout.HorizontalSlider(Settings.safeNoFlipSpeedKmh, 1, 30, GUILayout.Width(250))
-				);
-				GUILayout.EndHorizontal();
-
-				GUILayout.BeginHorizontal();
-				GUILayout.Label($"Multiplier: {Settings.flipMultiplierPercent:0.00}", GUILayout.Width(250));
-				Settings.flipMultiplierPercent =
-					Mathf.Round(GUILayout.HorizontalSlider(Settings.flipMultiplierPercent, 0.01f, 0.50f, GUILayout.Width(250)) * 100f) / 100f;
-				GUILayout.EndHorizontal();
-
-				GUILayout.Space(5);
-
-				GUILayout.Label("Formula Preview:");
-				GUILayout.Label($"1% damage  → {(1f * Settings.flipMultiplierPercent):0.##}% chance");
-				GUILayout.Label($"10% damage → {(10f * Settings.flipMultiplierPercent):0.##}% chance");
-				GUILayout.Label($"100% damage → {(100f * Settings.flipMultiplierPercent):0.##}% chance");
-			}
-
-            GUILayout.Space(2);
-			GUILayout.EndVertical();	
-			GUILayout.Space(5);
-
-			// =============================
-			// LOGGING
-			// =============================
-			//Settings.logging = GUILayout.Toggle(Settings.logging, "Enable logging");
-
-			GUILayout.Space(10);
-
-			// =============================
-			// DEBUG BUTTON
-			// =============================
-			if (GUILayout.Button("List all damaged junctions in log",GUILayout.Width(500)))
-			{
-				Log("==== DAMAGED JUNCTIONS ====",true);
-
-				foreach (var kv in DamageStore.All())
-				{
-					Log($"Damaged: {kv.Key} -> {kv.Value * 100f:0.###}%",true);
-				}
-
-				Log("==== END ====",true);
-			}
-		}
-
-        private static void OnSaveGUI(UnityModManager.ModEntry modEntry)
-        {
-			if (JM_Multiplayer.IsClient)
-			{
-				Log(
-					"[MP] Client settings were not saved. " +
-					"Settings are controlled by the host.",
-					true);
-
-				return;
-			}
-			
-            SaveLocalSettings(modEntry);
-			
-			JM_Multiplayer.BroadcastHostSettings();
-			
-            Log("Settings saved.", force: true);
-        }
-
-        // --- Logging and UI helpers ---
-
-        public static void Log(string msg, bool force = false)
-        {
-            if (!force && Settings != null && !Settings.logging) return;
-            Mod?.Logger.Log(msg);
-        }
-
-        private static float FloatFieldL(string label, float value)
-        {
-            GUILayout.BeginHorizontal();
-            GUILayout.Label(label, GUILayout.Width(320));
-            string s = GUILayout.TextField(value.ToString(System.Globalization.CultureInfo.InvariantCulture), GUILayout.Width(120));
-            GUILayout.EndHorizontal();
-            if (float.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var f))
-                return f;
-            return value;
-        }
-
-        private static string TextFieldL(string label, string value)
-        {
-            GUILayout.BeginHorizontal();
-            GUILayout.Label(label, GUILayout.Width(320));
-            string s = GUILayout.TextField(value ?? string.Empty, GUILayout.Width(220));
-            GUILayout.EndHorizontal();
-            return s;
-        }
-
-        private static bool ToggleL(string label, bool value)
-        {
-            GUILayout.BeginHorizontal();
-            bool v = GUILayout.Toggle(value, label, GUILayout.Width(320));
-            GUILayout.EndHorizontal();
-            return v;
         }
     }
 }
